@@ -35,6 +35,27 @@ def _resolve_executable() -> str:
     return resolved
 
 
+def _converter_command(executable: str, arguments: list[str]) -> list[str]:
+    command = [executable, *arguments]
+    if os.environ.get("ODA_USE_XVFB", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
+        xvfb = shutil.which("xvfb-run")
+        if xvfb is None:
+            raise OdaNotAvailableError(
+                "Le serveur X virtuel requis pour ODA est introuvable."
+            )
+        command = [
+            xvfb,
+            "-a",
+            "--server-args=-screen 0 1024x768x24",
+            *command,
+        ]
+    return command
+
+
 @contextmanager
 def converted_dwg(source: str | Path) -> Iterator[Path]:
     """Convert a DWG to a temporary DXF and always remove the workspace."""
@@ -51,15 +72,17 @@ def converted_dwg(source: str | Path) -> Iterator[Path]:
         # avoids converter surprises with control characters or platform separators.
         converter_input = input_dir / "source.dwg"
         shutil.copyfile(Path(source), converter_input)
-        command = [
+        command = _converter_command(
             executable,
+            [
             str(input_dir),
             str(output_dir),
             "ACAD2018",
             "DXF",
             "0",
             "1",
-        ]
+            ],
+        )
         environment = os.environ.copy()
         environment.setdefault(
             "QT_QPA_PLATFORM", os.environ.get("ODA_QT_PLATFORM", "xcb")

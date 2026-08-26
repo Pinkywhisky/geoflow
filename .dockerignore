@@ -9,5 +9,6 @@ samples/private
 *.dwg
 *.docx
 *.xlsx
+!app/documents/templates/copropriete_draft_v1.docx
 *.pdf
 *.deb*

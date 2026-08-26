@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -19,6 +22,7 @@ from app.domain import (
     Planche,
     PlanImporte,
     Provenance,
+    StatutValidationDonnees,
     Zone,
 )
 from app.domain.models import StatutRevue
@@ -54,6 +58,54 @@ def create_dossier(reference: str, dossier_type: str) -> Dossier:
     return Dossier(id=uuid4().hex, reference=clean_reference)
 
 
+def validation_snapshot(dossier: Dossier) -> bytes:
+    """Return the canonical business payload covered by data validation."""
+
+    payload = dossier.model_dump(
+        mode="json",
+        exclude={
+            "statut",
+            "statut_validation_donnees",
+            "date_validation_donnees",
+            "sha256_validation_donnees",
+            "generations",
+        },
+    )
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return (serialized + "\n").encode("utf-8")
+
+
+def validation_snapshot_sha256(dossier: Dossier) -> str:
+    return hashlib.sha256(validation_snapshot(dossier)).hexdigest()
+
+
+def invalidate_data_validation(dossier: Dossier) -> None:
+    """Mark changed canonical data for a new user validation."""
+
+    dossier.statut_validation_donnees = StatutValidationDonnees.A_VALIDER
+    dossier.date_validation_donnees = None
+    dossier.sha256_validation_donnees = None
+
+
+def record_data_validation(dossier: Dossier) -> None:
+    dossier.statut_validation_donnees = StatutValidationDonnees.VALIDE
+    dossier.date_validation_donnees = datetime.now(timezone.utc)
+    dossier.sha256_validation_donnees = validation_snapshot_sha256(dossier)
+
+
+def has_current_data_validation(dossier: Dossier) -> bool:
+    return (
+        dossier.statut_validation_donnees == StatutValidationDonnees.VALIDE
+        and dossier.sha256_validation_donnees
+        == validation_snapshot_sha256(dossier)
+    )
+
+
 def attach_import(
     dossier: Dossier,
     filename: str,
@@ -67,6 +119,8 @@ def attach_import(
         type_fichier=file_type,
         version_dxf=control.version_dxf,
         unite_detectee=control.unite_detectee,
+        unite_retenue=control.unite_detectee,
+        unite_confirmee=True,
         bbox=control.bbox,
     )
     # Importing another plan starts a new geometric review in this MVP.
@@ -76,8 +130,16 @@ def attach_import(
     dossier.niveaux = []
     dossier.lots = []
     dossier.zones = []
-    dossier.validations = []
+    apply_confirmed_unit(control, control.unite_detectee)
+    dossier.validations = [
+        DecisionValidation(
+            champ="unite_du_plan",
+            propose=control.unite_detectee,
+            retenu=control.unite_detectee,
+        )
+    ]
     dossier.statut = "controle_technique"
+    invalidate_data_validation(dossier)
 
 
 def confirm_unit(dossier: Dossier, retained_unit: str, justification: str = "") -> None:
@@ -100,6 +162,7 @@ def confirm_unit(dossier: Dossier, retained_unit: str, justification: str = "") 
     ]
     dossier.validations.append(decision)
     dossier.statut = "selection_planches"
+    invalidate_data_validation(dossier)
 
 
 def set_planche_status(
@@ -109,6 +172,7 @@ def set_planche_status(
     if planche is None:
         raise ValueError("Planche inconnue.")
     planche.statut = status
+    invalidate_data_validation(dossier)
 
 
 def set_layer_status(
@@ -123,6 +187,7 @@ def set_layer_status(
     if layer is None:
         raise ValueError("Calque inconnu.")
     layer.statut = status
+    invalidate_data_validation(dossier)
 
 
 def associate_candidate(
@@ -242,4 +307,5 @@ def associate_candidate(
         lot.zone_ids.append(zone.id)
     dossier.validations.append(decision)
     dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)
     return zone

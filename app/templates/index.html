@@ -9,18 +9,18 @@
 </head>
 <body>
 <main class="shell">
-  <header class="brand"><span class="mark">G</span><div><h1>GeoFlow</h1><p>MVP v0.3 · Workflow copropriété</p></div></header>
-  {% if message %}<div class="alert" role="alert">{{ message }}</div>{% endif %}
+  <header class="brand"><span class="mark">G</span><div><h1>GeoFlow</h1><p>MVP v0.4.1 · Assistant copropriété</p></div></header>
+  {% if message %}<div class="{% if request.query_params.get("deleted") == "1" %}notice{% else %}alert{% endif %}" role="status">{{ message }}</div>{% endif %}
 
   <section class="panel hero">
     <div>
       <p class="eyebrow">Nouveau dossier</p>
       <h2>Démarrer une étude de copropriété</h2>
-      <p class="muted">Importez un plan, contrôlez ses données techniques, puis validez chaque surface avec sa provenance.</p>
+      <p class="muted">GeoFlow détecte, vous corrigez si nécessaire, puis l’assistant enregistre et vous guide jusqu’au document.</p>
     </div>
     <form action="/dossiers" method="post" class="form-grid">
       <label>Référence du dossier
-        <input name="reference" required maxlength="120" placeholder="Ex. P4074">
+        <input name="reference" required maxlength="120" placeholder="Ex. DEMO-2026">
       </label>
       <fieldset>
         <legend>Type de dossier</legend>
@@ -36,7 +36,25 @@
     <p class="eyebrow">Dossiers locaux</p>
     <div class="dossier-list">
       {% for item in dossiers %}
-      <a href="/dossiers/{{ item.id }}"><strong>{{ item.reference }}</strong><span>{{ item.statut|replace("_", " ") }}</span></a>
+      <div class="dossier-row">
+        <a href="/dossiers/{{ item.id }}/plan">
+          <strong>{{ item.reference }}</strong>
+          <span>Copropriété · {% if item.statut_validation_donnees.value == "valide" %}Validé{% elif item.statut_validation_donnees.value == "a_valider" %}À valider{% else %}Brouillon{% endif %}</span>
+        </a>
+        <form action="/dossiers/{{ item.id }}/delete" method="post" data-delete-form data-reference="{{ item.reference }}">
+          <button
+            type="button"
+            class="trash-button"
+            data-delete-button
+            aria-label="Supprimer le dossier {{ item.reference }}"
+            title="Supprimer le dossier"
+          >
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+              <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </form>
+      </div>
       {% endfor %}
     </div>
   </section>

@@ -3,149 +3,39 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{{ dossier.reference }} — GeoFlow</title>
+  <title>Dossier — {{ dossier.reference }} — GeoFlow</title>
   <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
   <script src="{{ url_for("static", path="/app.js") }}" defer></script>
 </head>
 <body>
 <main class="shell wide-shell">
-  <header class="brand">
-    <a class="mark" href="/">G</a>
-    <div><h1>{{ dossier.reference }}</h1><p>Copropriété · {{ dossier.statut|replace("_", " ") }}</p></div>
-    {% if dossier.plan_importe %}<a class="secondary action-right" href="/dossiers/{{ dossier.id }}/export">Exporter JSON</a>{% endif %}
-  </header>
-  <nav class="steps" aria-label="Étapes">
-    <span class="done">1. Dossier</span><span class="{% if dossier.plan_importe %}done{% endif %}">2. Import</span><span class="{% if dossier.plan_importe and dossier.plan_importe.unite_confirmee %}done{% endif %}">3. Contrôle</span><span>4. Validation</span>
-  </nav>
+  {% include "_workflow_header.html" %}
   {% if message %}<div class="alert" role="alert">{{ message }}</div>{% endif %}
 
-  <section class="panel">
-    <p class="eyebrow">Étape 2 · Import du plan</p>
-    <h2>{% if dossier.plan_importe %}Plan importé{% else %}Sélectionner le plan source{% endif %}</h2>
-    {% if dossier.plan_importe %}
-      <p><strong>{{ dossier.plan_importe.nom_fichier_original }}</strong> <span class="badge">{{ dossier.plan_importe.type_fichier|upper }}</span></p>
-      <p class="muted">Un nouvel import remplace le contrôle géométrique courant et ses associations.</p>
-    {% endif %}
-    <form action="/dossiers/{{ dossier.id }}/import" method="post" enctype="multipart/form-data" class="inline-form">
-      <label>Fichier .dxf ou .dwg
-        <input name="file" type="file" accept=".dxf,.dwg" required data-file-input>
-        <small data-file-name>Aucun fichier sélectionné</small>
-      </label>
-      <button type="submit">{% if dossier.plan_importe %}Réimporter{% else %}Importer et contrôler{% endif %}</button>
-    </form>
-    <p class="hint">Lecture par blocs, limite stricte de 50 Mo et suppression des fichiers temporaires après traitement.</p>
-  </section>
-
-  {% if dossier.controle_technique %}
-  {% set control = dossier.controle_technique %}
-  <section class="panel">
-    <p class="eyebrow">Étape 3 · Contrôle technique</p>
-    <h2>Vérifier les informations détectées</h2>
-    <div class="metrics">
-      <div><span>Version</span><strong>{{ control.version_dxf }}</strong></div>
-      <div><span>Unité détectée</span><strong>{{ control.unite_detectee }}</strong></div>
-      <div><span>Calques</span><strong>{{ control.calques|length }}</strong></div>
-      <div><span>Entités</span><strong>{{ control.nombre_entites }}</strong></div>
-      <div><span>Polylignes calculables</span><strong>{{ control.polylignes_fermees }}</strong></div>
-      <div><span>Emprise</span><strong>{% if control.bbox %}{{ "%.2f"|format(control.bbox.min_x) }}, {{ "%.2f"|format(control.bbox.min_y) }} → {{ "%.2f"|format(control.bbox.max_x) }}, {{ "%.2f"|format(control.bbox.max_y) }}{% else %}Indisponible{% endif %}</strong></div>
-    </div>
-    {% for warning in control.avertissements %}<div class="warning">{{ warning }}</div>{% endfor %}
-
-    <form action="/dossiers/{{ dossier.id }}/unite" method="post" class="confirm-unit">
-      <label>Unité à retenir
-        <select name="unit" required>
-          {% for value, label in unit_options %}<option value="{{ value }}" {% if (dossier.plan_importe.unite_retenue or dossier.plan_importe.unite_detectee) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
-        </select>
-      </label>
-      <label>Justification si différente de la détection
-        <input name="justification" maxlength="300" placeholder="Motif de la correction">
-      </label>
-      <button type="submit">{% if dossier.plan_importe.unite_confirmee %}Mettre à jour{% else %}Confirmer l’unité{% endif %}</button>
-    </form>
-  </section>
-
-  <section class="panel">
-    <p class="eyebrow">Étape 4 · Planches et versions</p>
-    <h2>Retenir ou écarter les représentations</h2>
-    <p class="muted">La détection des régions est une aide initiale. Les mentions de versions abandonnées sont signalées mais restent soumises à votre décision.</p>
-    <div class="review-list">
-      {% for planche in dossier.planches %}
-      <form action="/dossiers/{{ dossier.id }}/planches/{{ planche.id }}" method="post">
-        <div><strong>{{ planche.titre }}</strong><small>{{ planche.methode_detection }} · statut actuel : {{ planche.statut.value }}</small></div>
-        <select name="status">
-          <option value="candidate" {% if planche.statut.value == "candidate" %}selected{% endif %}>Candidate</option>
-          <option value="retenue" {% if planche.statut.value == "retenue" %}selected{% endif %}>Retenue</option>
-          <option value="exclue" {% if planche.statut.value == "exclue" %}selected{% endif %}>Exclue</option>
-          <option value="abandonnee" {% if planche.statut.value == "abandonnee" %}selected{% endif %}>Abandonnée</option>
-        </select>
-        <button type="submit" class="small">Valider</button>
-      </form>
-      {% endfor %}
-    </div>
-  </section>
-
-  <details class="panel">
-    <summary>Inventaire des calques</summary>
-    <p class="muted">Les calques 80 à 83 sont présentés en priorité. Aucun calque n’est approuvé automatiquement.</p>
-    <div class="layer-grid">
-      {% for layer in control.calques %}
-      <form action="/dossiers/{{ dossier.id }}/calques" method="post" class="{% if layer.exclusion_suggeree %}suggested{% endif %}">
-        <input type="hidden" name="layer_name" value="{{ layer.nom }}">
-        <div><strong>{{ layer.nom }}</strong><small>visible {{ "oui" if layer.visible else "non" }} · gelé {{ "oui" if layer.gele else "non" }} · tracé {{ "oui" if layer.trace else "non" }}</small></div>
-        <select name="status"><option value="candidate">À valider</option><option value="retenue" {% if layer.statut.value == "retenue" %}selected{% endif %}>Retenu</option><option value="exclue" {% if layer.statut.value == "exclue" %}selected{% endif %}>Exclu</option></select>
-        <button class="small" type="submit">Appliquer</button>
-      </form>
-      {% endfor %}
-    </div>
-  </details>
-
-  <section class="panel">
-    <p class="eyebrow">Étape 5 · Zones, lots et niveaux</p>
-    <h2>Associer les surfaces candidates</h2>
-    {% if not dossier.plan_importe.unite_confirmee %}
-      <div class="warning">Confirmez d’abord l’unité du plan pour obtenir des surfaces en m² et débloquer les associations.</div>
-    {% else %}
-      <label class="filter">Filtrer les candidats <input type="search" placeholder="Calque, handle, texte…" data-zone-filter></label>
-      <p class="muted">{{ control.zones_candidates|length }} zone(s) candidate(s).</p>
-      <div class="candidate-list">
-      {% for candidate in control.zones_candidates %}
-        <article class="candidate {% if candidate.statut.value != "candidate" %}resolved{% endif %}" data-zone-card data-search="{{ candidate.calque }} {{ candidate.handle_dxf }} {{ candidate.textes_proches|join(" ") }}">
-          <div class="candidate-head">
-            <div><span class="badge">{{ candidate.calque }}</span> <strong>{{ candidate.id }}</strong><small>handle {{ candidate.handle_dxf }} · {{ candidate.type_entite }} · {{ candidate.planche_region }}</small></div>
-            <strong class="area">{{ "%.2f"|format(candidate.surface_geometrique_m2) }} m²</strong>
-          </div>
-          <p class="provenance">Source : {{ candidate.provenance.fichier_source }} · méthode : {{ candidate.provenance.methode_detection }}</p>
-          {% if candidate.textes_proches %}<p class="nearby">Textes proches : {{ candidate.textes_proches|join(" · ") }}</p>{% endif %}
-          {% if candidate.statut.value == "candidate" %}
-          <form action="/dossiers/{{ dossier.id }}/zones/{{ candidate.id }}" method="post" class="zone-form">
-            <label>Bâtiment<input name="building_code" required placeholder="A"></label>
-            <label>Niveau<input name="level_code" required placeholder="RdC ou Sous-sol"></label>
-            <label>Lot (optionnel)<input name="lot_number" placeholder="1"></label>
-            <label>Catégorie<select name="category">{% for value, label in categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label>
-            <label>Surface retenue<input name="retained_surface" inputmode="decimal" value="{{ "%.3f"|format(candidate.surface_geometrique_m2) }}"></label>
-            <label class="wide-field">Justification d’une correction<input name="justification" maxlength="300" placeholder="Obligatoire si la surface retenue diffère"></label>
-            <button type="submit">Associer la zone</button>
-          </form>
-          {% else %}<p class="success">Zone {{ candidate.statut.value }}.</p>{% endif %}
-        </article>
-      {% endfor %}
+  <section class="panel step-panel">
+    <div class="step-heading">
+      <div>
+        <p class="eyebrow">Dossier</p>
+        <h2>Identité du dossier</h2>
+        <p class="muted">Ces informations identifient le parcours GeoFlow en cours.</p>
       </div>
-    {% endif %}
+      <span class="step-number" aria-hidden="true">1</span>
+    </div>
+    <dl class="summary-grid">
+      <div><dt>Référence</dt><dd>{{ dossier.reference }}</dd></div>
+      <div><dt>Type</dt><dd>Copropriété</dd></div>
+      <div><dt>État</dt><dd>{{ workflow_status }}</dd></div>
+    </dl>
+    <div class="coming-soon" aria-disabled="true">
+      <strong>Hors copropriété</strong>
+      <span class="badge">Bientôt disponible</span>
+    </div>
   </section>
 
-  {% if dossier.lots or dossier.zones %}
-  <section class="panel">
-    <p class="eyebrow">Synthèse validée</p>
-    <h2>{{ dossier.lots|length }} lot(s), {{ dossier.zones|length }} zone(s)</h2>
-    {% for lot in dossier.lots %}
-      <div class="lot-summary"><strong>Lot {{ lot.numero }}</strong><span>{{ lot.zone_ids|length }} zone(s) · {{ lot.niveau_ids|length }} niveau(x) · {{ lot.batiment_ids|length }} bâtiment(s)</span></div>
-    {% endfor %}
-    <div class="table-wrap"><table><thead><tr><th>Zone</th><th>Lot</th><th>Catégorie</th><th>Source</th><th class="number">Géométrique</th><th class="number">Retenue</th></tr></thead><tbody>
-    {% for zone in dossier.zones %}<tr><td>{{ zone.id }}</td><td>{{ zone.lot_id or "—" }}</td><td>{{ zone.categorie.value }}</td><td>{{ zone.geometrie_source.calque }} / {{ zone.geometrie_source.handle_dxf }}</td><td class="number">{{ "%.2f"|format(zone.surface_geometrique_m2) }}</td><td class="number">{{ "%.2f"|format(zone.surface_retenue_m2) }}</td></tr>{% endfor %}
-    </tbody></table></div>
-  </section>
-  {% endif %}
-  {% endif %}
+  <footer class="step-actions">
+    <a class="secondary" href="/">Précédent</a>
+    <a href="/dossiers/{{ dossier.id }}/plan">Suivant</a>
+  </footer>
 </main>
 </body>
 </html>

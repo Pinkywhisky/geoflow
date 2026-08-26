@@ -107,7 +107,7 @@ def test_json_repository_round_trip_and_path_safety(tmp_path: Path) -> None:
     assert restored == dossier
     payload = (tmp_path / "json" / f"{dossier.id}.json").read_text(encoding="utf-8")
     assert payload.endswith(chr(10))
-    assert '"schema_version": "1.0"' in payload
+    assert '"schema_version": "1.1"' in payload
     assert "zones_candidates" in payload
     with pytest.raises(DossierNotFoundError):
         repository.get("../private")

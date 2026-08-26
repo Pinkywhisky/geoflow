@@ -25,6 +25,30 @@ def test_oda_missing_has_a_specific_error(
         converter._resolve_executable()
 
 
+def test_oda_can_be_wrapped_in_an_isolated_virtual_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ODA_USE_XVFB", "1")
+    monkeypatch.setattr(
+        converter.shutil,
+        "which",
+        lambda executable: "/usr/bin/xvfb-run"
+        if executable == "xvfb-run"
+        else None,
+    )
+    command = converter._converter_command(
+        "/usr/bin/ODAFileConverter", ["/input", "/output"]
+    )
+    assert command == [
+        "/usr/bin/xvfb-run",
+        "-a",
+        "--server-args=-screen 0 1024x768x24",
+        "/usr/bin/ODAFileConverter",
+        "/input",
+        "/output",
+    ]
+
+
 def test_oda_conversion_error_is_wrapped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -44,6 +68,7 @@ def test_oda_conversion_error_is_wrapped(
 def test_temporary_converted_dxf_is_removed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("ODA_USE_XVFB", raising=False)
     source = tmp_path / "unsafe name.dwg"
     source.write_bytes(b"synthetic dwg")
     seen: dict[str, Path] = {}
@@ -147,28 +172,29 @@ def test_guided_dwg_import_sanitizes_name_and_escapes_text(
     )
     assert created.status_code == 303
     location = created.headers["location"]
-    dossier_id = location.rsplit("/", 1)[-1]
+    dossier_id = location.split("/")[-2]
+    dossier_url = f"/dossiers/{dossier_id}"
     imported = web_client.post(
-        f"{location}/import",
+        f"{dossier_url}/import",
         files={"file": ("..\\..\\unsafe.dwg", b"synthetic")},
         follow_redirects=False,
     )
     assert imported.status_code == 303
     confirmed = web_client.post(
-        f"{location}/unite",
+        f"{dossier_url}/unite",
         data={"unit": "metre", "justification": ""},
         follow_redirects=False,
     )
     assert confirmed.status_code == 303
 
-    page = web_client.get(location)
+    page = web_client.get(f"{dossier_url}/lots?assignment=all")
     assert page.status_code == 200
     assert "<script>alert(1)</script>" not in page.text
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page.text
     dossier = main.repository.get(dossier_id)
     assert dossier.plan_importe.nom_fichier_original == "unsafe.dwg"
     assert dossier.plan_importe.type_fichier == "dwg"
-    exported = web_client.get(f"{location}/export")
+    exported = web_client.get(f"{dossier_url}/export")
     assert exported.status_code == 200
     assert ".." not in exported.json()["plan_importe"]["nom_fichier_original"]
 

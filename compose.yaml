@@ -1,10 +1,22 @@
 services:
   geoflow:
     build: .
+    environment:
+      ODA_FILE_CONVERTER: /usr/bin/ODAFileConverter
+      ODA_QT_PLATFORM: xcb
+      ODA_USE_XVFB: "1"
     ports:
       - "8080:8000"
     volumes:
       - geoflow-data:/data
+      - type: bind
+        source: ${ODA_FILE_CONVERTER_HOST:-/usr/bin/ODAFileConverter}
+        target: /usr/bin/ODAFileConverter
+        read_only: true
+      - type: bind
+        source: ${ODA_INSTALL_DIR_HOST:-/usr/bin/ODAFileConverter_27.1.0.0}
+        target: /usr/bin/ODAFileConverter_27.1.0.0
+        read_only: true
     restart: unless-stopped
 
 volumes:

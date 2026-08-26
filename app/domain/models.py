@@ -1,4 +1,4 @@
-"""Serializable canonical data model for the v0.3 vertical slice."""
+"""Serializable canonical data model for the GeoFlow workflow."""
 
 from __future__ import annotations
 
@@ -201,12 +201,72 @@ class Zone(CanonicalModel):
         return self
 
 
+class StatutValidationJuridique(str, Enum):
+    A_CONFIRMER = "a_confirmer"
+    CONFIRME = "confirme"
+
+
+class StatutValidationDonnees(str, Enum):
+    BROUILLON = "brouillon"
+    A_VALIDER = "a_valider"
+    VALIDE = "valide"
+
+
+class DroitParticulier(CanonicalModel):
+    id: str
+    description: str
+    lot_ids: list[str] = Field(default_factory=list)
+    statut_validation: StatutValidationJuridique = (
+        StatutValidationJuridique.A_CONFIRMER
+    )
+
+
+class Servitude(CanonicalModel):
+    id: str
+    description: str
+    statut_validation: StatutValidationJuridique = (
+        StatutValidationJuridique.A_CONFIRMER
+    )
+
+
+class Millieme(CanonicalModel):
+    lot_id: str
+    valeur: int = Field(ge=0)
+    base: int | None = Field(default=None, gt=0)
+    valide: bool = False
+
+
+class Generation(CanonicalModel):
+    id: str
+    type_document: Literal["etat_descriptif_copropriete"]
+    template_id: str
+    template_version: str
+    date_generation: datetime = Field(default_factory=utc_now)
+    sha256_snapshot: str = Field(pattern=r"^[a-f0-9]{64}$")
+    statut: Literal["brouillon", "valide"] = "brouillon"
+    nom_fichier: str
+    snapshot_filename: str = "dossier_snapshot.json"
+    avertissements: list[str] = Field(default_factory=list)
+
+
 class Dossier(CanonicalModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["1.0", "1.1"] = "1.1"
     id: str
     reference: str
     type: Literal["copropriete"] = "copropriete"
     statut: str = "nouveau"
+    statut_validation_donnees: StatutValidationDonnees = (
+        StatutValidationDonnees.BROUILLON
+    )
+    date_validation_donnees: datetime | None = None
+    sha256_validation_donnees: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{64}$"
+    )
+    adresse: str | None = None
+    commune: str | None = None
+    departement: str | None = None
+    references_cadastrales: list[str] = Field(default_factory=list)
+    date_plan: str | None = None
     plan_importe: PlanImporte | None = None
     controle_technique: ControleTechnique | None = None
     planches: list[Planche] = Field(default_factory=list)
@@ -215,3 +275,7 @@ class Dossier(CanonicalModel):
     lots: list[Lot] = Field(default_factory=list)
     zones: list[Zone] = Field(default_factory=list)
     validations: list[DecisionValidation] = Field(default_factory=list)
+    droits_particuliers: list[DroitParticulier] = Field(default_factory=list)
+    servitudes: list[Servitude] = Field(default_factory=list)
+    milliemes: list[Millieme] = Field(default_factory=list)
+    generations: list[Generation] = Field(default_factory=list)
