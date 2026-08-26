@@ -1,0 +1,41 @@
+"""Canonical business model for the GeoFlow copropriete workflow."""
+
+from .models import (
+    Batiment,
+    BBox,
+    CandidateZone,
+    CategorieZone,
+    ControleTechnique,
+    DecisionValidation,
+    Dossier,
+    GeometrieSource,
+    LayerInfo,
+    Lot,
+    Niveau,
+    Planche,
+    PlanImporte,
+    Provenance,
+    Sommet,
+    TexteDxf,
+    Zone,
+)
+
+__all__ = [
+    "Batiment",
+    "BBox",
+    "CandidateZone",
+    "CategorieZone",
+    "ControleTechnique",
+    "DecisionValidation",
+    "Dossier",
+    "GeometrieSource",
+    "LayerInfo",
+    "Lot",
+    "Niveau",
+    "Planche",
+    "PlanImporte",
+    "Provenance",
+    "Sommet",
+    "TexteDxf",
+    "Zone",
+]

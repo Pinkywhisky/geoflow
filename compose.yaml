@@ -1,0 +1,11 @@
+services:
+  geoflow:
+    build: .
+    ports:
+      - "8080:8000"
+    volumes:
+      - geoflow-data:/data
+    restart: unless-stopped
+
+volumes:
+  geoflow-data:

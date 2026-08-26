@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.log
+.idea/
+.vscode/
+.DS_Store
+*.tmp
+# GeoFlow - jeux de données métier privés
+samples/private/
+# Local JSON persistence
+data/
+*.dwg
+*.deb*
+*mshield
