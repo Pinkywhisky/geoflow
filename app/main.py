@@ -20,7 +20,12 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from app.domain import Dossier, StatutValidationDonnees
+from app.domain import (
+    Dossier,
+    StatutValidationDonnees,
+    StatutValidationMillieme,
+    VerificationStatus,
+)
 from app.domain.models import StatutRevue
 from app.documents import (
     GenerationBlockedError,
@@ -32,17 +37,26 @@ from app.documents import (
 from app.documents.generator import DOCUMENT_MIME
 from app.dwg import DwgConversionError, OdaNotAvailableError, dxf_source
 from app.dxf import DxfAnalysisError, analyze_dxf, inspect_dxf
+from app.reconciliation import reconcile_dossier
 from app.storage import DossierNotFoundError, JsonDossierRepository
 from app.workflow import (
+    add_parcel,
     associate_candidate,
     attach_import,
+    confirm_lot_proposal,
     confirm_unit,
     create_dossier,
     has_current_data_validation,
     record_data_validation,
+    mark_lot_proposal_for_review,
+    remove_parcel,
     safe_filename,
+    set_millieme_grid_complete,
     set_layer_status,
     set_planche_status,
+    update_dossier_details,
+    update_lot_metadata,
+    update_parcel,
 )
 
 
@@ -52,7 +66,7 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("GEOFLOW_DATA_DIR", BASE_DIR.parent / "data"))
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="GeoFlow", version="0.4.1")
+app = FastAPI(title="GeoFlow", version="0.4.3")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 repository = JsonDossierRepository(DATA_DIR)
@@ -71,6 +85,19 @@ CATEGORIES = [
     ("commune", "Commune"),
     ("autre", "Autre"),
 ]
+USAGE_OPTIONS = (
+    "Appartement",
+    "Local commercial",
+    "Cave",
+    "Débarras",
+    "Garage",
+    "Bureau",
+    "Autre",
+)
+MILLIEME_STATUS_OPTIONS = (
+    (StatutValidationMillieme.A_CONFIRMER.value, "À confirmer"),
+    (StatutValidationMillieme.VALIDE.value, "Validé"),
+)
 PAGE_SIZE = 25
 
 
@@ -236,7 +263,12 @@ def _mutation_error(
             {"status": "error", "message": message},
             status_code=400,
         )
-    renderer = _control_page if page == "controle" else _lots_page
+    renderers = {
+        "controle": _control_page,
+        "dossier": _dossier_page,
+        "lots": _lots_page,
+    }
+    renderer = renderers[page]
     return renderer(request, dossier, message, 400)
 
 
@@ -262,71 +294,152 @@ def _lots_page(
             409,
         )
 
+    if dossier.reconciliation is None:
+        reconcile_dossier(dossier)
+    reconciliation = dossier.reconciliation
+    assert reconciliation is not None
+    milliemes_by_lot = {item.lot_id: item for item in dossier.milliemes}
+
     query = request.query_params.get("q", "").strip()
-    layer_filter = request.query_params.get("layer", "").strip()
-    status_filter = request.query_params.get("status", "").strip()
-    assignment_filter = request.query_params.get("assignment", "unassigned").strip()
-    building_filter = request.query_params.get("building", "").strip()
-    level_filter = request.query_params.get("level", "").strip()
-    lot_filter = request.query_params.get("lot", "").strip()
+    proposal_status = request.query_params.get(
+        "proposal_status", "review"
+    ).strip()
+    technical_mode = (
+        request.query_params.get("view") == "technical"
+        or "assignment" in request.query_params
+    )
     try:
         requested_page = max(1, int(request.query_params.get("page", "1")))
     except ValueError:
         requested_page = 1
 
+    candidate_by_id = {item.id: item for item in control.zones_candidates}
+    evidence_by_id = {item.id: item for item in reconciliation.preuves}
     zones_by_candidate = {
         zone.id.removeprefix("validee-"): zone for zone in dossier.zones
     }
-    filtered = []
-    for candidate in control.zones_candidates:
-        zone = zones_by_candidate.get(candidate.id)
-        haystack = " ".join(
-            [
-                candidate.id,
-                candidate.calque,
-                candidate.handle_dxf,
-                *candidate.textes_proches,
-            ]
-        ).casefold()
-        if query and query.casefold() not in haystack:
-            continue
-        if layer_filter and candidate.calque != layer_filter:
-            continue
-        if status_filter and candidate.statut.value != status_filter:
-            continue
-        if assignment_filter == "assigned" and zone is None:
-            continue
-        if assignment_filter == "unassigned" and zone is not None:
-            continue
-        if building_filter and (zone is None or zone.batiment_id != building_filter):
-            continue
-        if level_filter and (zone is None or zone.niveau_id != level_filter):
-            continue
-        if lot_filter and (zone is None or zone.lot_id != lot_filter):
-            continue
-        filtered.append(candidate)
+    proposal_rows: list[dict[str, object]] = []
+    technical_rows: list[dict[str, object]] = []
 
-    filtered.sort(
-        key=lambda item: (
-            item.statut != StatutRevue.CANDIDATE,
-            item.calque.casefold(),
-            item.id,
+    if technical_mode:
+        layer_filter = request.query_params.get("layer", "").strip()
+        status_filter = request.query_params.get("status", "").strip()
+        assignment_filter = request.query_params.get(
+            "assignment", "unassigned"
+        ).strip()
+        filtered_candidates = []
+        for candidate in control.zones_candidates:
+            zone = zones_by_candidate.get(candidate.id)
+            haystack = " ".join(
+                [
+                    candidate.id,
+                    candidate.calque,
+                    candidate.handle_dxf,
+                    *candidate.textes_proches,
+                ]
+            ).casefold()
+            if query and query.casefold() not in haystack:
+                continue
+            if layer_filter and candidate.calque != layer_filter:
+                continue
+            if status_filter and candidate.statut.value != status_filter:
+                continue
+            if assignment_filter == "assigned" and zone is None:
+                continue
+            if assignment_filter == "unassigned" and zone is not None:
+                continue
+            filtered_candidates.append(candidate)
+        filtered_candidates.sort(
+            key=lambda item: (
+                item.statut != StatutRevue.CANDIDATE,
+                item.calque.casefold(),
+                item.id,
+            )
         )
-    )
-    page_count = max(1, math.ceil(len(filtered) / PAGE_SIZE))
+        filtered_count = len(filtered_candidates)
+    else:
+        filtered_proposals = []
+        review_statuses = {
+            VerificationStatus.A_CONFIRMER,
+            VerificationStatus.NON_RESOLU,
+            VerificationStatus.CONTRADICTOIRE,
+            VerificationStatus.A_REVOIR,
+        }
+        for proposal in reconciliation.lot_proposals:
+            haystack = " ".join(
+                [
+                    proposal.id,
+                    proposal.numero_propose,
+                    *proposal.candidate_zone_ids,
+                ]
+            ).casefold()
+            if query and query.casefold() not in haystack:
+                continue
+            if proposal_status == "review" and proposal.statut not in review_statuses:
+                continue
+            if proposal_status not in {"", "all", "review"} and (
+                proposal.statut.value != proposal_status
+            ):
+                continue
+            filtered_proposals.append(proposal)
+        filtered_proposals.sort(
+            key=lambda item: (
+                item.statut
+                not in {
+                    VerificationStatus.CONTRADICTOIRE,
+                    VerificationStatus.A_REVOIR,
+                    VerificationStatus.NON_RESOLU,
+                    VerificationStatus.A_CONFIRMER,
+                },
+                int(item.numero_propose)
+                if item.numero_propose.isdigit()
+                else math.inf,
+                item.numero_propose,
+            )
+        )
+        filtered_count = len(filtered_proposals)
+
+    page_count = max(1, math.ceil(filtered_count / PAGE_SIZE))
     current_page = min(requested_page, page_count)
     start = (current_page - 1) * PAGE_SIZE
-    page_candidates = filtered[start : start + PAGE_SIZE]
-
-    base_query = {
-        "q": query,
-        "layer": layer_filter,
-        "status": status_filter,
-        "assignment": assignment_filter,
-        "building": building_filter,
-        "level": level_filter,
-        "lot": lot_filter,
-    }
+    if technical_mode:
+        page_candidates = filtered_candidates[start : start + PAGE_SIZE]
+        technical_rows = [
+            {
+                "candidate": candidate,
+                "zone": zones_by_candidate.get(candidate.id),
+            }
+            for candidate in page_candidates
+        ]
+        base_query = {
+            "view": "technical",
+            "q": query,
+            "layer": layer_filter,
+            "status": status_filter,
+            "assignment": assignment_filter,
+        }
+    else:
+        page_proposals = filtered_proposals[start : start + PAGE_SIZE]
+        proposal_rows = [
+            {
+                "proposal": proposal,
+                "evidence": [
+                    evidence_by_id[evidence_id]
+                    for evidence_id in proposal.evidence_ids
+                    if evidence_id in evidence_by_id
+                ],
+                "candidates": [
+                    candidate_by_id[candidate_id]
+                    for candidate_id in proposal.candidate_zone_ids
+                    if candidate_id in candidate_by_id
+                ],
+            }
+            for proposal in page_proposals
+        ]
+        base_query = {
+            "q": query,
+            "proposal_status": proposal_status,
+        }
 
     def page_url(page_number: int) -> str:
         params = {key: value for key, value in base_query.items() if value}
@@ -334,19 +447,28 @@ def _lots_page(
         return f"/dossiers/{dossier.id}/lots?{urlencode(params)}"
 
     counts = {
-        "total": len(control.zones_candidates),
-        "retained": sum(
-            item.statut == StatutRevue.RETENUE
-            for item in control.zones_candidates
+        "contours": reconciliation.contours_analyses,
+        "business": len(reconciliation.business_zone_candidates),
+        "proposed": len(reconciliation.lot_proposals),
+        "auto": sum(
+            item.statut == VerificationStatus.AUTO_VERIFIE
+            for item in reconciliation.lot_proposals
         ),
-        "assigned": len(zones_by_candidate),
-        "untreated": sum(
-            item.statut == StatutRevue.CANDIDATE
-            for item in control.zones_candidates
+        "review": sum(
+            item.statut
+            in {
+                VerificationStatus.A_CONFIRMER,
+                VerificationStatus.NON_RESOLU,
+                VerificationStatus.A_REVOIR,
+            }
+            for item in reconciliation.lot_proposals
         ),
-        "excluded": sum(
-            item.statut in {StatutRevue.EXCLUE, StatutRevue.ABANDONNEE}
-            for item in control.zones_candidates
+        "contradictions": sum(
+            item.statut == VerificationStatus.CONTRADICTOIRE
+            for item in reconciliation.lot_proposals
+        ),
+        "excluded": len(
+            reconciliation.candidate_ids_exclus_techniquement
         ),
     }
     return _workflow_page(
@@ -357,18 +479,22 @@ def _lots_page(
         message,
         status_code,
         categories=CATEGORIES,
-        candidate_rows=[
-            {"candidate": candidate, "zone": zones_by_candidate.get(candidate.id)}
-            for candidate in page_candidates
-        ],
+        proposal_rows=proposal_rows,
+        technical_rows=technical_rows,
+        technical_mode=technical_mode,
         counts=counts,
         filters=base_query,
         layer_options=sorted({item.calque for item in control.zones_candidates}),
         current_page=current_page,
         page_count=page_count,
-        result_count=len(filtered),
+        result_count=filtered_count,
         previous_url=page_url(current_page - 1) if current_page > 1 else None,
         next_url=page_url(current_page + 1) if current_page < page_count else None,
+        reconciliation=reconciliation,
+        usage_options=USAGE_OPTIONS,
+        millieme_status_options=MILLIEME_STATUS_OPTIONS,
+        milliemes_by_lot=milliemes_by_lot,
+        millieme_total=sum(item.valeur for item in dossier.milliemes),
     )
 
 
@@ -479,6 +605,98 @@ async def delete_dossier(dossier_id: str) -> RedirectResponse:
 @app.get("/dossiers/{dossier_id}/dossier", response_class=HTMLResponse)
 async def dossier_page(request: Request, dossier_id: str) -> HTMLResponse:
     return _dossier_page(request, _get_dossier(dossier_id))
+
+
+@app.post("/dossiers/{dossier_id}/dossier/details")
+async def save_dossier_details(
+    request: Request,
+    dossier_id: str,
+    numero: str = Form(""),
+    voie: str = Form(""),
+    complement: str = Form(""),
+    code_postal: str = Form(""),
+    commune: str = Form(""),
+    departement: str = Form(""),
+    date_plan: str = Form(""),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    update_dossier_details(
+        dossier,
+        numero=numero,
+        voie=voie,
+        complement=complement,
+        code_postal=code_postal,
+        commune=commune,
+        departement=departement,
+        date_plan=date_plan,
+    )
+    return _saved_response(
+        request, dossier, f"/dossiers/{dossier.id}/dossier"
+    )
+
+
+@app.post("/dossiers/{dossier_id}/cadastre")
+async def create_parcel(
+    request: Request,
+    dossier_id: str,
+    commune: str = Form(...),
+    section: str = Form(...),
+    numero: str = Form(...),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    try:
+        add_parcel(
+            dossier,
+            commune=commune,
+            section=section,
+            numero=numero,
+        )
+    except ValueError as exc:
+        return _mutation_error(request, dossier, str(exc), "dossier")
+    return _saved_response(
+        request, dossier, f"/dossiers/{dossier.id}/dossier#cadastre"
+    )
+
+
+@app.post("/dossiers/{dossier_id}/cadastre/{parcel_index}")
+async def save_parcel(
+    request: Request,
+    dossier_id: str,
+    parcel_index: int,
+    commune: str = Form(...),
+    section: str = Form(...),
+    numero: str = Form(...),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    try:
+        update_parcel(
+            dossier,
+            parcel_index,
+            commune=commune,
+            section=section,
+            numero=numero,
+        )
+    except ValueError as exc:
+        return _mutation_error(request, dossier, str(exc), "dossier")
+    return _saved_response(
+        request, dossier, f"/dossiers/{dossier.id}/dossier#cadastre"
+    )
+
+
+@app.post("/dossiers/{dossier_id}/cadastre/{parcel_index}/delete")
+async def delete_parcel(
+    request: Request,
+    dossier_id: str,
+    parcel_index: int,
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    try:
+        remove_parcel(dossier, parcel_index)
+    except ValueError as exc:
+        return _mutation_error(request, dossier, str(exc), "dossier")
+    return _saved_response(
+        request, dossier, f"/dossiers/{dossier.id}/dossier#cadastre"
+    )
 
 
 @app.get("/dossiers/{dossier_id}/plan", response_class=HTMLResponse)
@@ -658,9 +876,104 @@ async def validate_zone(
             retained_surface=selected_surface,
             justification=justification,
         )
+        reconcile_dossier(dossier)
     except ValueError as exc:
         return _mutation_error(request, dossier, str(exc), "lots")
     return _saved_response(request, dossier, f"/dossiers/{dossier.id}/lots")
+
+
+@app.post("/dossiers/{dossier_id}/lots/{proposal_id}/review")
+async def review_lot_proposal(
+    request: Request,
+    dossier_id: str,
+    proposal_id: str,
+    reason: str = Form(...),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    try:
+        mark_lot_proposal_for_review(dossier, proposal_id, reason)
+    except ValueError as exc:
+        return _mutation_error(request, dossier, str(exc), "lots")
+    return _saved_response(
+        request,
+        dossier,
+        f"/dossiers/{dossier.id}/lots?proposal_status=review",
+    )
+
+
+@app.post("/dossiers/{dossier_id}/lots/{proposal_id}/confirm")
+async def confirm_reconciled_lot(
+    request: Request,
+    dossier_id: str,
+    proposal_id: str,
+    candidate_ids: list[str] = Form(...),
+    building_code: str = Form(...),
+    level_code: str = Form(...),
+    lot_number: str = Form(...),
+    category: str = Form("principale"),
+    reason: str = Form(...),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    try:
+        confirm_lot_proposal(
+            dossier=dossier,
+            proposal_id=proposal_id,
+            candidate_ids=candidate_ids,
+            building_code=building_code,
+            level_code=level_code,
+            lot_number=lot_number,
+            category=category,
+            reason=reason,
+        )
+    except ValueError as exc:
+        return _mutation_error(request, dossier, str(exc), "lots")
+    return _saved_response(
+        request,
+        dossier,
+        f"/dossiers/{dossier.id}/lots?proposal_status=review",
+    )
+
+
+@app.post("/dossiers/{dossier_id}/lots/{lot_id}/metadata")
+async def save_lot_metadata(
+    request: Request,
+    dossier_id: str,
+    lot_id: str,
+    usage: str = Form(""),
+    designation: str = Form(""),
+    millieme_value: str = Form(""),
+    millieme_base: str = Form("1000"),
+    millieme_status: str = Form("a_confirmer"),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    try:
+        update_lot_metadata(
+            dossier,
+            lot_id,
+            usage=usage,
+            designation=designation,
+            millieme_value=millieme_value,
+            millieme_base=millieme_base,
+            millieme_status=millieme_status,
+        )
+    except ValueError as exc:
+        return _mutation_error(request, dossier, str(exc), "lots")
+    return _saved_response(
+        request, dossier, f"/dossiers/{dossier.id}/lots#donnees-lots"
+    )
+
+
+@app.post("/dossiers/{dossier_id}/milliemes/status")
+async def save_millieme_grid_status(
+    request: Request,
+    dossier_id: str,
+    complete: bool = Form(False),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    set_millieme_grid_complete(dossier, complete)
+    return _saved_response(
+        request, dossier, f"/dossiers/{dossier.id}/lots#milliemes"
+    )
 
 
 @app.get("/dossiers/{dossier_id}/export")

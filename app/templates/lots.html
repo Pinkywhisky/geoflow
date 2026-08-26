@@ -16,152 +16,264 @@
     <div class="step-heading">
       <div>
         <p class="eyebrow">Lots & surfaces</p>
-        <h2>Associer les zones utiles</h2>
-        <p class="muted">Une zone est une surface issue du plan. Un lot peut regrouper plusieurs zones, niveaux ou bâtiments.</p>
+        <h2>Vérifier les lots proposés</h2>
+        <p class="muted">GeoFlow rapproche les repères, les surfaces annotées et les contours. Une proposition automatique reste explicable et révisable.</p>
       </div>
       <span class="step-number" aria-hidden="true">4</span>
     </div>
-    <div class="metrics zone-metrics">
-      <div><span>Candidates</span><strong>{{ counts.total }}</strong></div>
-      <div><span>Retenues</span><strong>{{ counts.retained }}</strong></div>
-      <div><span>Affectées</span><strong>{{ counts.assigned }}</strong></div>
-      <div><span>À traiter</span><strong>{{ counts.untreated }}</strong></div>
-      <div><span>Exclues / abandonnées</span><strong>{{ counts.excluded }}</strong></div>
+    <div class="metrics reconciliation-metrics">
+      <div><span>Contours analysés</span><strong>{{ counts.contours }}</strong></div>
+      <div><span>Zones métier possibles</span><strong>{{ counts.business }}</strong></div>
+      <div><span>Lots proposés</span><strong>{{ counts.proposed }}</strong></div>
+      <div><span>Auto-vérifiés</span><strong>{{ counts.auto }}</strong></div>
+      <div><span>À confirmer</span><strong>{{ counts.review }}</strong></div>
+      <div><span>Contradictions</span><strong>{{ counts.contradictions }}</strong></div>
+      <div><span>Exclus techniques</span><strong>{{ counts.excluded }}</strong></div>
     </div>
+    <p class="technical-rule">Profil {{ reconciliation.profil_regles }} · règles {{ reconciliation.version_regles }} · tolérance max({{ reconciliation.tolerance_absolue_m2 }} m², {{ reconciliation.tolerance_relative * 100 }} %).</p>
   </section>
 
-  <section class="panel">
+  {% if not technical_mode %}
+  <section class="panel work-queue">
     <div class="section-heading">
       <div>
-        <p class="eyebrow">File de travail</p>
-        <h2>Zones non affectées en priorité</h2>
+        <p class="eyebrow">À vérifier en priorité</p>
+        <h2>Propositions de lots</h2>
       </div>
       <span class="badge">{{ result_count }} résultat(s)</span>
     </div>
-    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid">
-      <label for="zone-q">Recherche
-        <input id="zone-q" name="q" type="search" value="{{ filters.q }}" placeholder="Calque, handle, texte…">
+    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid compact-filters">
+      <label for="proposal-q">Recherche
+        <input id="proposal-q" name="q" type="search" value="{{ filters.q }}" placeholder="Numéro ou identifiant…">
       </label>
-      <label for="zone-layer">Calque
-        <select id="zone-layer" name="layer">
-          <option value="">Tous</option>
-          {% for layer in layer_options %}<option value="{{ layer }}" {% if filters.layer == layer %}selected{% endif %}>{{ layer }}</option>{% endfor %}
-        </select>
-      </label>
-      <label for="zone-status">État
-        <select id="zone-status" name="status">
-          <option value="">Tous</option>
-          <option value="candidate" {% if filters.status == "candidate" %}selected{% endif %}>À vérifier</option>
-          <option value="retenue" {% if filters.status == "retenue" %}selected{% endif %}>Retenue</option>
-          <option value="exclue" {% if filters.status == "exclue" %}selected{% endif %}>Exclue</option>
-          <option value="abandonnee" {% if filters.status == "abandonnee" %}selected{% endif %}>Abandonnée</option>
-        </select>
-      </label>
-      <label for="zone-assignment">Affectation
-        <select id="zone-assignment" name="assignment">
-          <option value="unassigned" {% if filters.assignment == "unassigned" %}selected{% endif %}>Non affectées</option>
-          <option value="assigned" {% if filters.assignment == "assigned" %}selected{% endif %}>Déjà affectées</option>
-          <option value="all" {% if filters.assignment == "all" %}selected{% endif %}>Toutes</option>
-        </select>
-      </label>
-      <label for="zone-building">Bâtiment
-        <select id="zone-building" name="building">
-          <option value="">Tous</option>
-          {% for item in dossier.batiments %}<option value="{{ item.id }}" {% if filters.building == item.id %}selected{% endif %}>{{ item.code }}</option>{% endfor %}
-        </select>
-      </label>
-      <label for="zone-level">Niveau
-        <select id="zone-level" name="level">
-          <option value="">Tous</option>
-          {% for item in dossier.niveaux %}<option value="{{ item.id }}" {% if filters.level == item.id %}selected{% endif %}>{{ item.code }}</option>{% endfor %}
-        </select>
-      </label>
-      <label for="zone-lot">Lot
-        <select id="zone-lot" name="lot">
-          <option value="">Tous</option>
-          {% for item in dossier.lots %}<option value="{{ item.id }}" {% if filters.lot == item.id %}selected{% endif %}>Lot {{ item.numero }}</option>{% endfor %}
+      <label for="proposal-status">État
+        <select id="proposal-status" name="proposal_status">
+          <option value="review" {% if filters.proposal_status == "review" %}selected{% endif %}>À vérifier</option>
+          <option value="auto_verifie" {% if filters.proposal_status == "auto_verifie" %}selected{% endif %}>Auto-vérifiés</option>
+          <option value="confirme_manuel" {% if filters.proposal_status == "confirme_manuel" %}selected{% endif %}>Confirmés manuellement</option>
+          <option value="contradictoire" {% if filters.proposal_status == "contradictoire" %}selected{% endif %}>Contradictions</option>
+          <option value="all" {% if filters.proposal_status == "all" %}selected{% endif %}>Tous</option>
         </select>
       </label>
       <button type="submit">Filtrer</button>
     </form>
 
-    <div class="candidate-list">
-      {% for row in candidate_rows %}
-      {% set candidate = row.candidate %}
-      {% set zone = row.zone %}
-      <article class="candidate {% if zone %}resolved{% endif %}">
+    <div class="proposal-list">
+      {% for row in proposal_rows %}
+      {% set proposal = row.proposal %}
+      <article class="lot-proposal status-{{ proposal.statut.value }}">
         <div class="candidate-head">
           <div>
-            <span class="badge">{{ candidate.calque }}</span>
-            <strong>{{ candidate.id }}</strong>
-            <small>Handle {{ candidate.handle_dxf }} · {{ candidate.type_entite }} · {{ candidate.planche_region }}</small>
+            <span class="status-pill {{ proposal.statut.value }}">
+              {% if proposal.statut.value == "auto_verifie" %}✓ Auto-vérifié
+              {% elif proposal.statut.value == "a_confirmer" %}⚠ À confirmer
+              {% elif proposal.statut.value == "non_resolu" %}● Non résolu
+              {% elif proposal.statut.value == "contradictoire" %}● Contradictoire
+              {% elif proposal.statut.value == "confirme_manuel" %}✓ Confirmé
+              {% elif proposal.statut.value == "a_revoir" %}⚠ À revoir
+              {% else %}{{ proposal.statut.value }}{% endif %}
+            </span>
+            <h3>Lot {{ proposal.numero_propose }}</h3>
+            <small>{{ proposal.occurrence_ids|length }} occurrence(s) · {{ proposal.candidate_zone_ids|length }} contour(s) principal(aux)</small>
           </div>
-          <strong class="area">{% if candidate.surface_geometrique_m2 is not none %}{{ "%.2f"|format(candidate.surface_geometrique_m2) }} m²{% else %}Non calculable{% endif %}</strong>
+          <strong class="area">{% if proposal.surface_proposee_m2 is not none %}{{ "%.2f"|format(proposal.surface_proposee_m2) }} m²{% else %}Surface non résolue{% endif %}</strong>
         </div>
-        <p class="provenance">Source : {{ candidate.provenance.fichier_source }} · détection : {{ candidate.provenance.methode_detection }}</p>
-        {% if candidate.textes_proches %}<p class="nearby">Textes proches : {{ candidate.textes_proches|join(" · ") }}</p>{% endif %}
 
-        {% if zone %}
-        <div class="resolved-summary">
-          <strong>Zone affectée</strong>
-          <span>{{ zone.batiment_id }} · {{ zone.niveau_id }} · {{ zone.lot_id or "sans lot" }}</span>
-          <span>{{ "%.2f"|format(zone.surface_retenue_m2) }} m² retenus</span>
+        <div class="surface-comparison">
+          <span>Géométrie <strong>{{ "%.2f"|format(proposal.surface_geometrique_m2) }} m²</strong></span>
+          <span>Annotation <strong>{% if proposal.surface_annotee_m2 is not none %}{{ "%.2f"|format(proposal.surface_annotee_m2) }} m²{% else %}absente{% endif %}</strong></span>
+          <span>Statut automatique <strong>{{ proposal.statut_automatique.value|replace("_", " ") }}</strong></span>
         </div>
-        {% else %}
-        <form action="/dossiers/{{ dossier.id }}/zones/{{ candidate.id }}" method="post" class="zone-form" data-zone-form data-geometric-surface="{{ candidate.surface_geometrique_m2 }}">
-          <label>Bâtiment
-            <input name="building_code" required maxlength="60" placeholder="A">
-          </label>
-          <label>Niveau
-            <input name="level_code" required maxlength="60" placeholder="RdC ou Sous-sol">
-          </label>
-          <label>Lot
-            <input name="lot_number" maxlength="60" placeholder="1">
-            <small>Optionnel uniquement pour une partie commune.</small>
-          </label>
-          <label>Catégorie
-            <select name="category">{% for value, label in categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
-          </label>
-          <label>Surface retenue
-            <input name="retained_surface" inputmode="decimal" value="{{ "%.3f"|format(candidate.surface_geometrique_m2) }}" required>
-          </label>
-          <label class="wide-field" data-surface-justification hidden>
-            Justification de la correction
-            <input name="justification" maxlength="300" placeholder="Obligatoire si la surface retenue diffère">
-          </label>
-          <button type="submit">Associer la zone</button>
+
+        <details class="evidence-details">
+          <summary>Pourquoi cette proposition ?</summary>
+          <ul class="evidence-list">
+            {% for proof in row.evidence %}
+            <li class="{{ proof.polarite.value }}">
+              <strong>{{ proof.source|replace("_", " ") }}</strong>
+              <span>{{ proof.description }}</span>
+              {% if proof.valeur is not none %}<small>Valeur : {{ proof.valeur }}{% if proof.distance is not none %} · distance {{ "%.2f"|format(proof.distance) }}{% endif %} · fiabilité {{ proof.fiabilite.value }}</small>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+
+        {% if proposal.decision_manuelle %}
+        <div class="resolved-summary">
+          <strong>Décision manuelle conservée</strong>
+          <span>{{ proposal.decision_manuelle.motif }}</span>
+          <small>{{ proposal.decision_manuelle.horodatage.strftime("%d/%m/%Y à %H:%M") }} · proposition automatique initiale : {{ proposal.statut_automatique.value|replace("_", " ") }}</small>
+        </div>
+        {% endif %}
+
+        {% if proposal.statut.value != "confirme_manuel" and row.candidates %}
+        <form action="/dossiers/{{ dossier.id }}/lots/{{ proposal.id }}/confirm" method="post" class="proposal-form">
+          <fieldset class="zone-selection">
+            <legend>Zones à retenir</legend>
+            {% for candidate in row.candidates %}
+            <label>
+              <input type="checkbox" name="candidate_ids" value="{{ candidate.id }}" checked>
+              <span>{{ candidate.id }} · {{ candidate.calque }} · {{ "%.2f"|format(candidate.surface_geometrique_m2 or 0) }} m²</span>
+            </label>
+            {% endfor %}
+          </fieldset>
+          <div class="proposal-fields">
+            <label>Bâtiment <input name="building_code" required maxlength="60" value="A"></label>
+            <label>Niveau <input name="level_code" required maxlength="60" value="À confirmer"></label>
+            <label>Numéro retenu <input name="lot_number" required maxlength="60" value="{{ proposal.numero_propose }}"></label>
+            <label>Catégorie
+              <select name="category">{% for value, label in categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+            </label>
+            <label class="wide-field">Motif de la décision
+              <input name="reason" required maxlength="300" placeholder="Contrôle visuel, correction ou confirmation…">
+            </label>
+          </div>
+          <button type="submit">Confirmer ce lot</button>
+        </form>
+        {% endif %}
+
+        {% if proposal.statut.value == "auto_verifie" %}
+        <form action="/dossiers/{{ dossier.id }}/lots/{{ proposal.id }}/review" method="post" class="review-form">
+          <label>Motif du réexamen <input name="reason" required maxlength="300" placeholder="Élément à contrôler…"></label>
+          <button type="submit" class="secondary">Marquer « À revoir »</button>
         </form>
         {% endif %}
       </article>
       {% else %}
       <div class="empty-state">
-        <strong>Aucune zone ne correspond à ces filtres.</strong>
-        <a href="/dossiers/{{ dossier.id }}/lots?assignment=unassigned">Afficher les zones non affectées</a>
+        <strong>Aucune proposition ne correspond à ce filtre.</strong>
+        <a href="/dossiers/{{ dossier.id }}/lots?proposal_status=all">Afficher toutes les propositions</a>
       </div>
       {% endfor %}
     </div>
+  </section>
+  {% else %}
+  <section class="panel">
+    <div class="section-heading">
+      <div><p class="eyebrow">Détails techniques</p><h2>Contours calculables</h2></div>
+      <span class="badge">{{ result_count }} résultat(s)</span>
+    </div>
+    <p class="muted">Cette vue sert à l’audit technique. Un contour affiché ici n’est pas automatiquement une tâche métier.</p>
+    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid">
+      <input type="hidden" name="view" value="technical">
+      <label>Recherche <input name="q" type="search" value="{{ filters.q }}" placeholder="Calque, handle, texte…"></label>
+      <label>Calque
+        <select name="layer"><option value="">Tous</option>{% for layer in layer_options %}<option value="{{ layer }}" {% if filters.layer == layer %}selected{% endif %}>{{ layer }}</option>{% endfor %}</select>
+      </label>
+      <label>État
+        <select name="status"><option value="">Tous</option><option value="candidate" {% if filters.status == "candidate" %}selected{% endif %}>Candidate</option><option value="retenue" {% if filters.status == "retenue" %}selected{% endif %}>Retenue</option><option value="exclue" {% if filters.status == "exclue" %}selected{% endif %}>Exclue</option></select>
+      </label>
+      <label>Affectation
+        <select name="assignment"><option value="unassigned" {% if filters.assignment == "unassigned" %}selected{% endif %}>Non affectées</option><option value="assigned" {% if filters.assignment == "assigned" %}selected{% endif %}>Affectées</option><option value="all" {% if filters.assignment == "all" %}selected{% endif %}>Toutes</option></select>
+      </label>
+      <button type="submit">Filtrer</button>
+    </form>
+    <div class="candidate-list">
+      {% for row in technical_rows %}
+      {% set candidate = row.candidate %}
+      <article class="candidate {% if row.zone %}resolved{% endif %}">
+        <div class="candidate-head"><div><span class="badge">{{ candidate.calque }}</span><strong>{{ candidate.id }}</strong><small>Handle {{ candidate.handle_dxf }} · {{ candidate.type_entite }} · {{ candidate.planche_region }}</small></div><strong class="area">{{ "%.2f"|format(candidate.surface_geometrique_m2 or 0) }} m²</strong></div>
+        <p class="provenance">Source : {{ candidate.provenance.fichier_source }} · {{ candidate.provenance.methode_detection }}</p>
+        {% if candidate.textes_proches %}<p class="nearby">Textes proches : {{ candidate.textes_proches|join(" · ") }}</p>{% endif %}
+        {% if row.zone %}<div class="resolved-summary"><strong>Zone affectée</strong><span>{{ row.zone.lot_id or "sans lot" }} · {{ "%.2f"|format(row.zone.surface_retenue_m2) }} m²</span></div>{% endif %}
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
 
-    {% if page_count > 1 %}
-    <nav class="pagination" aria-label="Pagination des zones">
-      {% if previous_url %}<a class="secondary" href="{{ previous_url }}">Précédent</a>{% else %}<span></span>{% endif %}
-      <span>Page {{ current_page }} sur {{ page_count }}</span>
-      {% if next_url %}<a class="secondary" href="{{ next_url }}">Suivant</a>{% endif %}
-    </nav>
-    {% endif %}
+  {% if page_count > 1 %}
+  <nav class="pagination" aria-label="Pagination">
+    {% if previous_url %}<a class="secondary" href="{{ previous_url }}">Précédent</a>{% else %}<span></span>{% endif %}
+    <span>Page {{ current_page }} sur {{ page_count }}</span>
+    {% if next_url %}<a class="secondary" href="{{ next_url }}">Suivant</a>{% endif %}
+  </nav>
+  {% endif %}
+
+  <section class="panel technical-access">
+    <div><p class="eyebrow">Audit</p><h2>{% if technical_mode %}Retour aux propositions{% else %}Détails techniques séparés{% endif %}</h2><p class="muted">Les contours non classés et exclus restent consultables sans encombrer la file de lots.</p></div>
+    <a class="secondary" href="/dossiers/{{ dossier.id }}/lots{% if not technical_mode %}?view=technical&assignment=all{% endif %}">{% if technical_mode %}Voir les lots proposés{% else %}Voir les contours{% endif %}</a>
   </section>
 
   {% if dossier.lots %}
-  <section class="panel">
-    <p class="eyebrow">Lots constitués</p>
-    <h2>{{ dossier.lots|length }} lot(s)</h2>
-    <div class="lot-stack">
-      {% for lot in dossier.lots %}
-      <div class="lot-summary">
-        <strong>Lot {{ lot.numero }}</strong>
-        <span>{{ lot.zone_ids|length }} zone(s) · {{ lot.niveau_ids|length }} niveau(x) · {{ lot.batiment_ids|length }} bâtiment(s)</span>
+  <section id="donnees-lots" class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Données métier</p>
+        <h2>Compléter les lots constitués</h2>
+        <p class="muted">L’usage, la désignation et les millièmes appartiennent au lot, même lorsqu’il contient plusieurs zones.</p>
       </div>
+      <span class="autosave-note">Sauvegarde automatique</span>
+    </div>
+    <div class="lot-metadata-list">
+      {% for lot in dossier.lots %}
+      {% set millieme = milliemes_by_lot.get(lot.id) %}
+      <form
+        action="/dossiers/{{ dossier.id }}/lots/{{ lot.id }}/metadata"
+        method="post"
+        class="lot-metadata-card"
+        data-autosave
+      >
+        <div class="lot-metadata-heading">
+          <div>
+            <h3>Lot {{ lot.numero }}</h3>
+            <small>{{ lot.zone_ids|length }} zone(s) · {{ lot.niveau_ids|length }} niveau(x) · {{ lot.batiment_ids|length }} bâtiment(s)</small>
+          </div>
+          <output class="autosave-note" data-form-status aria-live="polite">Enregistré</output>
+        </div>
+        <div class="business-grid lot-business-fields">
+          <label>Usage
+            <select name="usage">
+              <option value="" {% if not lot.usage %}selected{% endif %}>Non renseigné</option>
+              {% for option in usage_options %}
+              <option value="{{ option }}" {% if lot.usage == option %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+              {% if lot.usage and lot.usage not in usage_options %}
+              <option value="{{ lot.usage }}" selected>{{ lot.usage }}</option>
+              {% endif %}
+            </select>
+          </label>
+          <label class="wide-field">Désignation
+            <textarea name="designation" maxlength="1000" rows="3" placeholder="Description libre du lot">{{ lot.designation or '' }}</textarea>
+          </label>
+        </div>
+        <details class="millieme-details" {% if millieme %}open{% endif %}>
+          <summary>Millièmes généraux</summary>
+          <p class="muted">Valeur fournie ou saisie manuellement, sans calcul automatique.</p>
+          <div class="millieme-fields">
+            <label>Valeur
+              <input name="millieme_value" type="number" min="0" step="1" value="{{ millieme.valeur if millieme else '' }}" placeholder="250">
+            </label>
+            <label>Base
+              <input name="millieme_base" type="number" min="1" step="1" value="{{ millieme.base if millieme and millieme.base else 1000 }}">
+            </label>
+            <label>Statut
+              <select name="millieme_status">
+                {% for value, label in millieme_status_options %}
+                <option value="{{ value }}" {% if millieme and millieme.statut_validation.value == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </label>
+          </div>
+        </details>
+      </form>
       {% endfor %}
     </div>
+
+    <form
+      id="milliemes"
+      action="/dossiers/{{ dossier.id }}/milliemes/status"
+      method="post"
+      class="millieme-grid-status"
+      data-autosave
+    >
+      <label class="checkbox-label">
+        <input type="checkbox" name="complete" value="true" {% if dossier.grille_milliemes_complete %}checked{% endif %}>
+        La grille est complète pour tous les lots
+      </label>
+      <span>Total saisi : <strong>{{ millieme_total }} / 1000</strong></span>
+      <output class="autosave-note" data-form-status aria-live="polite">Enregistré</output>
+    </form>
   </section>
   {% endif %}
 

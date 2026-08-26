@@ -212,11 +212,24 @@ def inspect_dxf(
             texts.append(
                 TexteDxf(
                     contenu=content,
+                    contenu_normalise=_normalized(content),
                     x=x,
                     y=y,
                     calque=safe_dxf_string(entity.dxf.get("layer", "0"), 255),
                     handle_dxf=safe_dxf_string(entity.dxf.get("handle", ""), 64),
                     planche_region=layout_id,
+                    provenance=Provenance(
+                        fichier_source=source_filename,
+                        handle_dxf=safe_dxf_string(
+                            entity.dxf.get("handle", ""), 64
+                        ),
+                        calque=safe_dxf_string(
+                            entity.dxf.get("layer", "0"), 255
+                        ),
+                        type_entite=entity.dxftype(),
+                        planche_region=layout_id,
+                        methode_detection="texte_dxf_positionne",
+                    ),
                 )
             )
 

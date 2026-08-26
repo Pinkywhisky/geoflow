@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from app.domain import (
+    AdressePostale,
     Batiment,
     CategorieZone,
     ControleTechnique,
@@ -18,15 +19,21 @@ from app.domain import (
     Dossier,
     GeometrieSource,
     Lot,
+    ManualReconciliationDecision,
+    Millieme,
     Niveau,
+    Parcelle,
     Planche,
     PlanImporte,
     Provenance,
     StatutValidationDonnees,
+    StatutValidationMillieme,
+    VerificationStatus,
     Zone,
 )
 from app.domain.models import StatutRevue
 from app.dxf import apply_confirmed_unit
+from app.reconciliation import reconcile_dossier
 
 
 def safe_filename(filename: str) -> str:
@@ -56,6 +63,151 @@ def create_dossier(reference: str, dossier_type: str) -> Dossier:
     if not clean_reference:
         raise ValueError("La reference du dossier est obligatoire.")
     return Dossier(id=uuid4().hex, reference=clean_reference)
+
+
+def _optional_label(value: str, limit: int) -> str | None:
+    cleaned = _safe_label(value, limit)
+    return cleaned or None
+
+
+def update_dossier_details(
+    dossier: Dossier,
+    *,
+    numero: str,
+    voie: str,
+    complement: str,
+    code_postal: str,
+    commune: str,
+    departement: str,
+    date_plan: str,
+) -> None:
+    address = AdressePostale(
+        numero=_optional_label(numero, 20),
+        voie=_optional_label(voie, 180),
+        complement=_optional_label(complement, 180),
+        code_postal=_optional_label(code_postal, 12),
+    )
+    dossier.adresse = None if address.est_vide else address
+    dossier.commune = _optional_label(commune, 120)
+    dossier.departement = _optional_label(departement, 120)
+    dossier.date_plan = _optional_label(date_plan, 40)
+    dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)
+
+
+def _validated_parcel(
+    commune: str,
+    section: str,
+    numero: str,
+) -> Parcelle:
+    clean_commune = _optional_label(commune, 120)
+    clean_section = _optional_label(section, 30)
+    clean_number = _optional_label(numero, 60)
+    if not clean_commune or not clean_section or not clean_number:
+        raise ValueError(
+            "La commune, la section et le numéro de parcelle sont obligatoires."
+        )
+    return Parcelle(
+        commune=clean_commune,
+        section=clean_section,
+        numero=clean_number,
+    )
+
+
+def add_parcel(
+    dossier: Dossier,
+    *,
+    commune: str,
+    section: str,
+    numero: str,
+) -> None:
+    dossier.references_cadastrales.append(
+        _validated_parcel(commune, section, numero)
+    )
+    dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)
+
+
+def update_parcel(
+    dossier: Dossier,
+    index: int,
+    *,
+    commune: str,
+    section: str,
+    numero: str,
+) -> None:
+    if index < 0 or index >= len(dossier.references_cadastrales):
+        raise ValueError("Référence cadastrale inconnue.")
+    dossier.references_cadastrales[index] = _validated_parcel(
+        commune, section, numero
+    )
+    dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)
+
+
+def remove_parcel(dossier: Dossier, index: int) -> None:
+    if index < 0 or index >= len(dossier.references_cadastrales):
+        raise ValueError("Référence cadastrale inconnue.")
+    dossier.references_cadastrales.pop(index)
+    dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)
+
+
+def update_lot_metadata(
+    dossier: Dossier,
+    lot_id: str,
+    *,
+    usage: str,
+    designation: str,
+    millieme_value: str,
+    millieme_base: str,
+    millieme_status: str,
+) -> None:
+    lot = next((item for item in dossier.lots if item.id == lot_id), None)
+    if lot is None:
+        raise ValueError("Lot inconnu.")
+    lot.usage = _optional_label(usage, 120)
+    lot.designation = _optional_label(designation, 1000)
+
+    existing = next(
+        (item for item in dossier.milliemes if item.lot_id == lot_id),
+        None,
+    )
+    if not millieme_value.strip():
+        dossier.milliemes = [
+            item for item in dossier.milliemes if item.lot_id != lot_id
+        ]
+    else:
+        try:
+            value = int(millieme_value)
+            base = int(millieme_base or "1000")
+        except ValueError as exc:
+            raise ValueError("Les millièmes doivent être des nombres entiers.") from exc
+        if value < 0 or base <= 0:
+            raise ValueError("Les millièmes et leur base doivent être positifs.")
+        status = StatutValidationMillieme(millieme_status)
+        if existing is None:
+            dossier.milliemes.append(
+                Millieme(
+                    lot_id=lot_id,
+                    valeur=value,
+                    base=base,
+                    statut_validation=status,
+                )
+            )
+        else:
+            existing.valeur = value
+            existing.base = base
+            existing.statut_validation = status
+
+    dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)
+
+
+def set_millieme_grid_complete(dossier: Dossier, complete: bool) -> None:
+    dossier.grille_milliemes_complete = complete
+    dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)
 
 
 def validation_snapshot(dossier: Dossier) -> bytes:
@@ -130,6 +282,7 @@ def attach_import(
     dossier.niveaux = []
     dossier.lots = []
     dossier.zones = []
+    dossier.reconciliation = None
     apply_confirmed_unit(control, control.unite_detectee)
     dossier.validations = [
         DecisionValidation(
@@ -139,6 +292,7 @@ def attach_import(
         )
     ]
     dossier.statut = "controle_technique"
+    reconcile_dossier(dossier)
     invalidate_data_validation(dossier)
 
 
@@ -162,6 +316,7 @@ def confirm_unit(dossier: Dossier, retained_unit: str, justification: str = "") 
     ]
     dossier.validations.append(decision)
     dossier.statut = "selection_planches"
+    reconcile_dossier(dossier)
     invalidate_data_validation(dossier)
 
 
@@ -172,6 +327,7 @@ def set_planche_status(
     if planche is None:
         raise ValueError("Planche inconnue.")
     planche.statut = status
+    reconcile_dossier(dossier)
     invalidate_data_validation(dossier)
 
 
@@ -187,6 +343,7 @@ def set_layer_status(
     if layer is None:
         raise ValueError("Calque inconnu.")
     layer.statut = status
+    reconcile_dossier(dossier)
     invalidate_data_validation(dossier)
 
 
@@ -309,3 +466,112 @@ def associate_candidate(
     dossier.statut = "en_validation"
     invalidate_data_validation(dossier)
     return zone
+
+
+def mark_lot_proposal_for_review(
+    dossier: Dossier, proposal_id: str, reason: str
+) -> None:
+    reconciliation = dossier.reconciliation
+    if reconciliation is None:
+        raise ValueError("Aucune réconciliation n'est disponible.")
+    proposal = next(
+        (item for item in reconciliation.lot_proposals if item.id == proposal_id),
+        None,
+    )
+    if proposal is None:
+        raise ValueError("Proposition de lot inconnue.")
+    clean_reason = _safe_label(reason, 300)
+    if not clean_reason:
+        raise ValueError("Le motif de réexamen est obligatoire.")
+    proposal.decision_manuelle = ManualReconciliationDecision(
+        statut=VerificationStatus.A_REVOIR,
+        numero_retenu=proposal.numero_propose,
+        candidate_zone_ids_retenus=proposal.candidate_zone_ids,
+        surface_retenue_m2=proposal.surface_geometrique_m2,
+        motif=clean_reason,
+    )
+    proposal.statut = VerificationStatus.A_REVOIR
+    reconcile_dossier(dossier)
+    invalidate_data_validation(dossier)
+
+
+def confirm_lot_proposal(
+    dossier: Dossier,
+    proposal_id: str,
+    candidate_ids: list[str],
+    building_code: str,
+    level_code: str,
+    lot_number: str,
+    category: str,
+    reason: str,
+) -> None:
+    reconciliation = dossier.reconciliation
+    control = dossier.controle_technique
+    if reconciliation is None or control is None:
+        raise ValueError("Aucune réconciliation n'est disponible.")
+    proposal = next(
+        (item for item in reconciliation.lot_proposals if item.id == proposal_id),
+        None,
+    )
+    if proposal is None:
+        raise ValueError("Proposition de lot inconnue.")
+
+    selected_ids = list(dict.fromkeys(candidate_ids))
+    if not selected_ids:
+        raise ValueError("Sélectionnez au moins une zone pour confirmer le lot.")
+    if any(item not in proposal.candidate_zone_ids for item in selected_ids):
+        raise ValueError("Une zone sélectionnée ne fait pas partie de la proposition.")
+    clean_building = _safe_label(building_code, 60)
+    clean_level = _safe_label(level_code, 60)
+    clean_lot = _safe_label(lot_number, 60)
+    clean_reason = _safe_label(reason, 300)
+    CategorieZone(category)
+    if not clean_building or not clean_level or not clean_lot:
+        raise ValueError("Le bâtiment, le niveau et le numéro de lot sont obligatoires.")
+    if not clean_reason:
+        raise ValueError("Le motif de la décision manuelle est obligatoire.")
+
+    candidates = {
+        item.id: item for item in control.zones_candidates if item.id in selected_ids
+    }
+    if len(candidates) != len(selected_ids):
+        raise ValueError("Une zone sélectionnée est inconnue.")
+    existing_by_candidate = {
+        zone.id.removeprefix("validee-"): zone for zone in dossier.zones
+    }
+    for candidate_id in selected_ids:
+        existing = existing_by_candidate.get(candidate_id)
+        if existing is not None:
+            existing_lot = next(
+                (item for item in dossier.lots if item.id == existing.lot_id), None
+            )
+            if existing_lot is None or existing_lot.numero != clean_lot:
+                raise ValueError("Une zone sélectionnée est déjà affectée à un autre lot.")
+
+    for candidate_id in selected_ids:
+        if candidate_id in existing_by_candidate:
+            continue
+        associate_candidate(
+            dossier=dossier,
+            candidate_id=candidate_id,
+            building_code=clean_building,
+            level_code=clean_level,
+            lot_number=clean_lot,
+            category=category,
+        )
+
+    retained_surface = sum(
+        candidates[candidate_id].surface_geometrique_m2 or 0.0
+        for candidate_id in selected_ids
+    )
+    proposal.decision_manuelle = ManualReconciliationDecision(
+        statut=VerificationStatus.CONFIRME_MANUEL,
+        numero_retenu=clean_lot,
+        candidate_zone_ids_retenus=selected_ids,
+        surface_retenue_m2=retained_surface,
+        motif=clean_reason,
+    )
+    proposal.statut = VerificationStatus.CONFIRME_MANUEL
+    reconcile_dossier(dossier)
+    dossier.statut = "en_validation"
+    invalidate_data_validation(dossier)

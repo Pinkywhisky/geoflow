@@ -39,10 +39,25 @@
     <a class="secondary" href="/dossiers/{{ dossier.id }}/synthese">Retour à la synthèse</a>
   </section>
   {% else %}
-    {% if readiness.warnings %}
+    {% if readiness.user_actions %}
     <section class="panel">
-      <p class="eyebrow">Avertissements documentaires</p>
-      <ul class="warning-list">{% for item in readiness.warnings %}<li>{{ item }}</li>{% endfor %}</ul>
+      <p class="eyebrow">Données métier à compléter</p>
+      <ul class="warning-list">
+        {% for item in readiness.user_actions %}
+        <li>{{ item.message }} {% if item.href %}<a href="{{ item.href }}">{{ item.action_label }}</a>{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    {% if readiness.product_limitations %}
+    <section class="panel product-limit-panel">
+      <p class="eyebrow">Limites de cette version</p>
+      <ul class="warning-list">
+        {% for item in readiness.product_limitations %}
+        <li>{{ item.message }} <span>Fonctionnalité non disponible dans cette version.</span></li>
+        {% endfor %}
+      </ul>
     </section>
     {% endif %}
 

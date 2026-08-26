@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 def utc_now() -> datetime:
@@ -74,11 +81,83 @@ class PlanImporte(CanonicalModel):
     date_import: datetime = Field(default_factory=utc_now)
 
 
+class AdressePostale(CanonicalModel):
+    numero: str | None = None
+    voie: str | None = None
+    complement: str | None = None
+    code_postal: str | None = None
+
+    @property
+    def ligne_voie(self) -> str:
+        return " ".join(
+            item.strip()
+            for item in (self.numero, self.voie)
+            if item and item.strip()
+        )
+
+    @property
+    def est_vide(self) -> bool:
+        return not any(
+            (item or "").strip()
+            for item in (
+                self.numero,
+                self.voie,
+                self.complement,
+                self.code_postal,
+            )
+        )
+
+
+class Parcelle(CanonicalModel):
+    commune: str | None = None
+    section: str | None = None
+    numero: str | None = None
+    reference_libre: str | None = None
+
+    @property
+    def libelle(self) -> str:
+        parts = []
+        if self.commune:
+            parts.append(self.commune.strip())
+        cadastral = " ".join(
+            item
+            for item in (
+                f"section {self.section.strip()}" if self.section else "",
+                f"n° {self.numero.strip()}" if self.numero else "",
+            )
+            if item
+        )
+        if cadastral:
+            parts.append(cadastral)
+        return " — ".join(parts) or (self.reference_libre or "").strip()
+
+
 class StatutRevue(str, Enum):
     CANDIDATE = "candidate"
     RETENUE = "retenue"
     EXCLUE = "exclue"
     ABANDONNEE = "abandonnee"
+
+
+class VerificationStatus(str, Enum):
+    AUTO_VERIFIE = "auto_verifie"
+    A_CONFIRMER = "a_confirmer"
+    NON_RESOLU = "non_resolu"
+    CONTRADICTOIRE = "contradictoire"
+    EXCLU_TECHNIQUE = "exclu_technique"
+    CONFIRME_MANUEL = "confirme_manuel"
+    A_REVOIR = "a_revoir"
+
+
+class EvidencePolarity(str, Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+
+
+class EvidenceReliability(str, Enum):
+    FAIBLE = "faible"
+    MOYENNE = "moyenne"
+    FORTE = "forte"
 
 
 class Planche(CanonicalModel):
@@ -106,11 +185,13 @@ class LayoutInfo(CanonicalModel):
 
 class TexteDxf(CanonicalModel):
     contenu: str
+    contenu_normalise: str = ""
     x: float
     y: float
     calque: str
     handle_dxf: str
     planche_region: str
+    provenance: Provenance | None = None
 
 
 class CandidateZone(CanonicalModel):
@@ -126,6 +207,18 @@ class CandidateZone(CanonicalModel):
     textes_proches: list[str] = Field(default_factory=list)
     statut: StatutRevue = StatutRevue.CANDIDATE
     provenance: Provenance
+
+
+class Evidence(CanonicalModel):
+    id: str
+    polarite: EvidencePolarity
+    source: str
+    valeur: str | float | int | bool | None = None
+    fiabilite: EvidenceReliability
+    description: str
+    distance: float | None = Field(default=None, ge=0)
+    candidate_zone_ids: list[str] = Field(default_factory=list)
+    provenance: Provenance | None = None
 
 
 class ControleTechnique(CanonicalModel):
@@ -176,6 +269,67 @@ class CategorieZone(str, Enum):
     AUTRE = "autre"
 
 
+class BusinessZoneCandidate(CanonicalModel):
+    candidate_zone_id: str
+    categorie_proposee: CategorieZone
+    statut: VerificationStatus
+    evidence_ids: list[str] = Field(default_factory=list)
+    motif: str
+
+
+class ManualReconciliationDecision(CanonicalModel):
+    statut: VerificationStatus
+    numero_retenu: str | None = None
+    candidate_zone_ids_retenus: list[str] = Field(default_factory=list)
+    surface_retenue_m2: float | None = Field(default=None, ge=0)
+    motif: str
+    horodatage: datetime = Field(default_factory=utc_now)
+
+
+class LotProposal(CanonicalModel):
+    id: str
+    numero_propose: str
+    occurrence_ids: list[str] = Field(default_factory=list)
+    candidate_zone_ids: list[str] = Field(default_factory=list)
+    surface_geometrique_m2: float = Field(default=0.0, ge=0)
+    surface_annotee_m2: float | None = Field(default=None, ge=0)
+    surface_proposee_m2: float | None = Field(default=None, ge=0)
+    statut_automatique: VerificationStatus
+    statut: VerificationStatus
+    evidence_ids: list[str] = Field(default_factory=list)
+    decision_manuelle: ManualReconciliationDecision | None = None
+
+
+class GlobalCheckStatus(str, Enum):
+    OK = "ok"
+    AVERTISSEMENT = "avertissement"
+    BLOQUANT = "bloquant"
+
+
+class GlobalCheck(CanonicalModel):
+    code: str
+    statut: GlobalCheckStatus
+    message: str
+    proposal_ids: list[str] = Field(default_factory=list)
+    candidate_zone_ids: list[str] = Field(default_factory=list)
+
+
+class ReconciliationResult(CanonicalModel):
+    version_regles: str
+    profil_regles: str
+    tolerance_absolue_m2: float = Field(ge=0)
+    tolerance_relative: float = Field(ge=0)
+    contours_analyses: int = Field(ge=0)
+    business_zone_candidates: list[BusinessZoneCandidate] = Field(
+        default_factory=list
+    )
+    lot_proposals: list[LotProposal] = Field(default_factory=list)
+    preuves: list[Evidence] = Field(default_factory=list)
+    candidate_ids_exclus_techniquement: list[str] = Field(default_factory=list)
+    candidate_ids_non_resolus: list[str] = Field(default_factory=list)
+    controles_globaux: list[GlobalCheck] = Field(default_factory=list)
+
+
 class Zone(CanonicalModel):
     id: str
     batiment_id: str
@@ -212,6 +366,11 @@ class StatutValidationDonnees(str, Enum):
     VALIDE = "valide"
 
 
+class StatutValidationMillieme(str, Enum):
+    A_CONFIRMER = "a_confirmer"
+    VALIDE = "valide"
+
+
 class DroitParticulier(CanonicalModel):
     id: str
     description: str
@@ -233,7 +392,28 @@ class Millieme(CanonicalModel):
     lot_id: str
     valeur: int = Field(ge=0)
     base: int | None = Field(default=None, gt=0)
-    valide: bool = False
+    statut_validation: StatutValidationMillieme = (
+        StatutValidationMillieme.A_CONFIRMER
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_validation(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        migrated = dict(value)
+        legacy = migrated.pop("valide", None)
+        if "statut_validation" not in migrated and legacy is not None:
+            migrated["statut_validation"] = (
+                StatutValidationMillieme.VALIDE
+                if legacy
+                else StatutValidationMillieme.A_CONFIRMER
+            )
+        return migrated
+
+    @property
+    def valide(self) -> bool:
+        return self.statut_validation == StatutValidationMillieme.VALIDE
 
 
 class Generation(CanonicalModel):
@@ -250,7 +430,7 @@ class Generation(CanonicalModel):
 
 
 class Dossier(CanonicalModel):
-    schema_version: Literal["1.0", "1.1"] = "1.1"
+    schema_version: Literal["1.0", "1.1", "1.2"] = "1.1"
     id: str
     reference: str
     type: Literal["copropriete"] = "copropriete"
@@ -262,13 +442,14 @@ class Dossier(CanonicalModel):
     sha256_validation_donnees: str | None = Field(
         default=None, pattern=r"^[a-f0-9]{64}$"
     )
-    adresse: str | None = None
+    adresse: AdressePostale | None = None
     commune: str | None = None
     departement: str | None = None
-    references_cadastrales: list[str] = Field(default_factory=list)
+    references_cadastrales: list[Parcelle] = Field(default_factory=list)
     date_plan: str | None = None
     plan_importe: PlanImporte | None = None
     controle_technique: ControleTechnique | None = None
+    reconciliation: ReconciliationResult | None = None
     planches: list[Planche] = Field(default_factory=list)
     batiments: list[Batiment] = Field(default_factory=list)
     niveaux: list[Niveau] = Field(default_factory=list)
@@ -278,4 +459,38 @@ class Dossier(CanonicalModel):
     droits_particuliers: list[DroitParticulier] = Field(default_factory=list)
     servitudes: list[Servitude] = Field(default_factory=list)
     milliemes: list[Millieme] = Field(default_factory=list)
+    grille_milliemes_complete: bool = False
     generations: list[Generation] = Field(default_factory=list)
+
+    @field_validator("adresse", mode="before")
+    @classmethod
+    def migrate_legacy_address(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return {"voie": value}
+        return value
+
+    @field_validator("references_cadastrales", mode="before")
+    @classmethod
+    def migrate_legacy_parcels(cls, value: Any) -> Any:
+        if not isinstance(value, list):
+            return value
+        migrated = []
+        for item in value:
+            if not isinstance(item, str):
+                migrated.append(item)
+                continue
+            match = re.search(
+                r"(?i)section\s+(.+?)\s+n[°o]?\s*([\w.-]+)",
+                item.strip(),
+            )
+            if match:
+                migrated.append(
+                    {
+                        "section": match.group(1).strip(),
+                        "numero": match.group(2).strip(),
+                        "reference_libre": item.strip(),
+                    }
+                )
+            else:
+                migrated.append({"reference_libre": item.strip()})
+        return migrated

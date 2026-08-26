@@ -86,8 +86,10 @@ def test_all_lots_are_generated_in_natural_order(generated) -> None:
 
 def test_multi_zone_and_multi_level_lot_is_described(generated) -> None:
     text = document_text(open_generated(generated))
-    assert "zone-lot-1-principale" in text
-    assert "zone-lot-1-cave" in text
+    assert "Zone 1" in text
+    assert "Zone 2" in text
+    assert "zone-lot-1-principale" not in text
+    assert "zone-lot-1-cave" not in text
     assert "RdC, Sous-sol" in text
     assert "Appartement et cave" in text
 
@@ -111,14 +113,16 @@ def test_geometric_surface_correction_and_justification_are_visible(
 ) -> None:
     text = document_text(open_generated(generated))
     assert "72,00 m²" in text
-    assert "70,00 m² (-2.00 m²)" in text
+    assert "70,00 m²" in text
+    assert "-2.00 m²" in text
     assert "Déduction d'une trémie mesurée et validée." in text
 
 
 def test_common_zone_and_optional_right_are_visible(generated) -> None:
     text = document_text(open_generated(generated))
     assert "Parties communes identifiées" in text
-    assert "zone-commune" in text
+    assert "Partie commune 1" in text
+    assert "zone-commune" not in text
     assert "Droit d'usage privatif" in text
     assert "À confirmer" in text
 
@@ -138,7 +142,7 @@ def test_supplied_milliemes_are_displayed_without_calculation(
     assert "sans calcul ni déduction automatique" in text
     assert "250" in text
     assert "1000" in text
-    assert "À valider" in text
+    assert "À confirmer" in text
 
 
 def test_remaining_validation_warnings_are_visible(generated) -> None:
@@ -146,7 +150,7 @@ def test_remaining_validation_warnings_are_visible(generated) -> None:
     assert "Points restant à valider" in text
     assert "millièmes ne sont pas renseignés" in text
     assert "servitudes restent à confirmer" in text
-    assert "clauses juridiques restent à compléter" in text
+    assert "clauses juridiques ne sont pas encore gérées" in text
     assert "correction(s) manuelle(s)" in text
 
 

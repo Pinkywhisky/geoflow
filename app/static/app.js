@@ -54,7 +54,7 @@ document.querySelectorAll("form[data-autosave]").forEach((form) => {
     event.preventDefault();
     autosave(form);
   });
-  form.querySelectorAll("select, input:not([type=hidden])").forEach((field) => {
+  form.querySelectorAll("select, textarea, input:not([type=hidden])").forEach((field) => {
     field.addEventListener("change", () => {
       if (form.matches("[data-unit-form]")) updateUnitForm(form);
       autosave(form);

@@ -26,6 +26,98 @@
       <div><dt>Type</dt><dd>Copropriété</dd></div>
       <div><dt>État</dt><dd>{{ workflow_status }}</dd></div>
     </dl>
+
+    <section id="adresse" class="business-form-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Adresse et relevé</p>
+          <h3>Localiser l’opération</h3>
+        </div>
+        <span class="autosave-note">Sauvegarde automatique</span>
+      </div>
+      <form
+        action="/dossiers/{{ dossier.id }}/dossier/details"
+        method="post"
+        class="business-grid"
+        data-autosave
+      >
+        <label>Numéro
+          <input name="numero" maxlength="20" value="{{ dossier.adresse.numero if dossier.adresse else '' }}">
+        </label>
+        <label class="wide-field">Voie
+          <input name="voie" maxlength="180" value="{{ dossier.adresse.voie if dossier.adresse else '' }}">
+        </label>
+        <label class="wide-field">Complément
+          <input name="complement" maxlength="180" value="{{ dossier.adresse.complement if dossier.adresse else '' }}">
+        </label>
+        <label>Code postal
+          <input name="code_postal" maxlength="12" inputmode="numeric" value="{{ dossier.adresse.code_postal if dossier.adresse else '' }}">
+        </label>
+        <label>Commune
+          <input name="commune" maxlength="120" value="{{ dossier.commune or '' }}">
+        </label>
+        <label>Département
+          <input name="departement" maxlength="120" value="{{ dossier.departement or '' }}">
+        </label>
+        <label>Date du plan / relevé
+          <input name="date_plan" maxlength="40" placeholder="JJ/MM/AAAA" value="{{ dossier.date_plan or '' }}">
+        </label>
+        <output class="autosave-note" data-form-status aria-live="polite">Enregistré</output>
+      </form>
+    </section>
+
+    <section id="cadastre" class="business-form-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Références cadastrales</p>
+          <h3>{{ dossier.references_cadastrales|length }} parcelle(s)</h3>
+        </div>
+      </div>
+      <div class="parcel-list">
+        {% for parcel in dossier.references_cadastrales %}
+        <div class="parcel-row">
+          <form
+            action="/dossiers/{{ dossier.id }}/cadastre/{{ loop.index0 }}"
+            method="post"
+            class="parcel-form"
+            data-autosave
+          >
+            <label>Commune
+              <input name="commune" required maxlength="120" value="{{ parcel.commune or dossier.commune or '' }}">
+            </label>
+            <label>Section
+              <input name="section" required maxlength="30" value="{{ parcel.section or '' }}">
+            </label>
+            <label>Parcelle
+              <input name="numero" required maxlength="60" value="{{ parcel.numero or '' }}">
+            </label>
+            <output class="autosave-note" data-form-status aria-live="polite">Enregistré</output>
+            {% if parcel.reference_libre and not parcel.section %}
+            <small class="legacy-value">Ancienne valeur : {{ parcel.reference_libre }}</small>
+            {% endif %}
+          </form>
+          <form action="/dossiers/{{ dossier.id }}/cadastre/{{ loop.index0 }}/delete" method="post">
+            <button type="submit" class="icon-button danger" aria-label="Supprimer cette parcelle" title="Supprimer cette parcelle">🗑</button>
+          </form>
+        </div>
+        {% else %}
+        <p class="muted">Aucune référence cadastrale renseignée.</p>
+        {% endfor %}
+      </div>
+      <form action="/dossiers/{{ dossier.id }}/cadastre" method="post" class="parcel-form add-parcel-form">
+        <label>Commune
+          <input name="commune" required maxlength="120" value="{{ dossier.commune or '' }}">
+        </label>
+        <label>Section
+          <input name="section" required maxlength="30" placeholder="AO">
+        </label>
+        <label>Parcelle
+          <input name="numero" required maxlength="60" placeholder="163">
+        </label>
+        <button type="submit">Ajouter une parcelle</button>
+      </form>
+    </section>
+
     <div class="coming-soon" aria-disabled="true">
       <strong>Hors copropriété</strong>
       <span class="badge">Bientôt disponible</span>

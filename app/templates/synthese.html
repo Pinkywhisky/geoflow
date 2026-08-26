@@ -25,7 +25,12 @@
     <div class="summary-sections">
       <section>
         <h3>Dossier</h3>
-        <dl><div><dt>Référence</dt><dd>{{ dossier.reference }}</dd></div><div><dt>Type</dt><dd>Copropriété</dd></div></dl>
+        <dl>
+          <div><dt>Référence</dt><dd>{{ dossier.reference }}</dd></div>
+          <div><dt>Type</dt><dd>Copropriété</dd></div>
+          <div><dt>Adresse</dt><dd>{% if dossier.adresse %}{{ dossier.adresse.ligne_voie or "Non renseignée" }}{% else %}Non renseignée{% endif %}</dd></div>
+          <div><dt>Cadastre</dt><dd>{{ dossier.references_cadastrales|length }} parcelle(s)</dd></div>
+        </dl>
       </section>
       <section>
         <h3>Plan</h3>
@@ -37,7 +42,7 @@
       </section>
       <section>
         <h3>Structure</h3>
-        <dl><div><dt>Bâtiments</dt><dd>{{ dossier.batiments|length }}</dd></div><div><dt>Niveaux</dt><dd>{{ dossier.niveaux|length }}</dd></div><div><dt>Lots</dt><dd>{{ dossier.lots|length }}</dd></div></dl>
+        <dl><div><dt>Bâtiments</dt><dd>{{ dossier.batiments|length }}</dd></div><div><dt>Niveaux</dt><dd>{{ dossier.niveaux|length }}</dd></div><div><dt>Lots confirmés</dt><dd>{{ dossier.lots|length }}</dd></div>{% if dossier.reconciliation %}<div><dt>Lots proposés</dt><dd>{{ dossier.reconciliation.lot_proposals|length }}</dd></div>{% endif %}</dl>
       </section>
       <section>
         <h3>Surfaces</h3>
@@ -49,6 +54,29 @@
       </section>
     </div>
   </section>
+
+  {% if dossier.reconciliation %}
+  <section class="panel checks-panel">
+    <div class="section-heading">
+      <div><p class="eyebrow">Réconciliation des lots</p><h2>Contrôles globaux</h2></div>
+      <span class="badge">Règles {{ dossier.reconciliation.version_regles }}</span>
+    </div>
+    <div class="lot-stack">
+      {% for proposal in dossier.reconciliation.lot_proposals %}
+      <div class="lot-summary">
+        <strong>Lot {{ proposal.numero_propose }}</strong>
+        <span>{{ proposal.statut.value|replace("_", " ") }} · {{ proposal.candidate_zone_ids|length }} zone(s) · {% if proposal.surface_proposee_m2 is not none %}{{ "%.2f"|format(proposal.surface_proposee_m2) }} m²{% else %}surface non résolue{% endif %}</span>
+      </div>
+      {% endfor %}
+    </div>
+    {% for check in dossier.reconciliation.controles_globaux %}
+    <div class="check-row {% if check.statut.value == "bloquant" %}blocked{% elif check.statut.value == "avertissement" %}warning{% else %}ok{% endif %}">
+      <span aria-hidden="true">{% if check.statut.value == "bloquant" %}●{% elif check.statut.value == "avertissement" %}⚠{% else %}✓{% endif %}</span>
+      <div><strong>{{ check.code|replace("_", " ") }}</strong><p>{{ check.message }}</p></div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
 
   <section class="panel checks-panel">
     <div class="section-heading">
@@ -62,8 +90,34 @@
     {% for item in readiness.blockers %}
     <div class="check-row blocked"><span aria-hidden="true">●</span><div><strong>Blocage</strong><p>{{ item }}</p></div></div>
     {% endfor %}
-    {% for item in readiness.warnings %}
-    <div class="check-row warning"><span aria-hidden="true">⚠</span><div><strong>Avertissement</strong><p>{{ item }}</p></div></div>
+    {% if readiness.user_actions %}
+    <h3>Données métier à compléter</h3>
+    {% for item in readiness.user_actions %}
+    <div class="check-row warning">
+      <span aria-hidden="true">⚠</span>
+      <div>
+        <strong>{{ item.message }}</strong>
+        {% if item.href %}<p><a class="inline-action" href="{{ item.href }}">{{ item.action_label }}</a></p>{% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% if readiness.product_limitations %}
+    <h3>Limites de cette version</h3>
+    {% for item in readiness.product_limitations %}
+    <div class="check-row product-limit">
+      <span aria-hidden="true">ℹ</span>
+      <div>
+        <strong>{{ item.message }}</strong>
+        <p>Fonctionnalité non disponible dans cette version. Le document restera un brouillon.</p>
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    {% for item in readiness.information %}
+    <div class="check-row ok"><span aria-hidden="true">✓</span><div><strong>Information</strong><p>{{ item.message }}</p></div></div>
     {% endfor %}
   </section>
 

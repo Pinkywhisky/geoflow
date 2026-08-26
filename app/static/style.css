@@ -317,6 +317,181 @@ dd {
   color: #852d1f;
 }
 
+.reconciliation-metrics {
+  grid-template-columns: repeat(7, minmax(105px, 1fr));
+}
+
+.technical-rule {
+  margin: 14px 0 0;
+  color: var(--muted);
+  font-size: .82rem;
+}
+
+.compact-filters {
+  grid-template-columns: minmax(220px, 2fr) minmax(180px, 1fr) auto;
+}
+
+.proposal-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.lot-proposal {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-left: 5px solid #d5ddd9;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.lot-proposal.status-contradictoire {
+  border-left-color: #b7402f;
+  background: #fffaf8;
+}
+
+.lot-proposal.status-auto_verifie,
+.lot-proposal.status-confirme_manuel {
+  border-left-color: var(--green);
+}
+
+.lot-proposal.status-a_confirmer,
+.lot-proposal.status-a_revoir,
+.lot-proposal.status-non_resolu {
+  border-left-color: #c08b25;
+}
+
+.lot-proposal h3 {
+  margin: 8px 0 2px;
+  font-size: 1.35rem;
+}
+
+.status-pill.auto_verifie,
+.status-pill.confirme_manuel {
+  background: #e4f4ed;
+  color: var(--green-dark);
+}
+
+.status-pill.a_confirmer,
+.status-pill.a_revoir,
+.status-pill.non_resolu {
+  background: #fff5dc;
+  color: #71500f;
+}
+
+.status-pill.contradictoire {
+  background: #ffebe6;
+  color: #852d1f;
+}
+
+.surface-comparison {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 9px;
+  background: var(--green-pale);
+  color: var(--muted);
+  font-size: .9rem;
+}
+
+.surface-comparison strong {
+  color: var(--ink);
+}
+
+.evidence-details {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.evidence-details summary {
+  padding: 12px 14px;
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.evidence-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 14px 14px;
+  list-style: none;
+}
+
+.evidence-list li {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-left: 3px solid #85bba8;
+  background: #f7fbf9;
+}
+
+.evidence-list li.negative {
+  border-left-color: #c75a48;
+  background: #fff7f5;
+}
+
+.evidence-list small {
+  color: var(--muted);
+}
+
+.proposal-form,
+.review-form {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.zone-selection {
+  display: grid;
+  max-height: 230px;
+  margin: 0 0 14px;
+  padding: 12px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.zone-selection label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 6px 4px;
+  font-size: .86rem;
+}
+
+.zone-selection input {
+  width: auto;
+  margin-top: 2px;
+}
+
+.proposal-fields {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.proposal-fields .wide-field {
+  grid-column: 1 / -1;
+}
+
+.review-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 12px;
+}
+
+.technical-access {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
 .check-row {
   display: grid;
   grid-template-columns: 30px 1fr;
@@ -387,6 +562,153 @@ dd {
   color: #721f15;
 }
 
+.business-form-section {
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.business-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+textarea {
+  width: 100%;
+  padding: 11px 12px;
+  resize: vertical;
+  border: 1px solid #cbd8d2;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+}
+
+textarea:focus {
+  outline: 3px solid #3ea58330;
+  border-color: var(--green);
+}
+
+.parcel-list,
+.lot-metadata-list {
+  display: grid;
+  gap: 12px;
+}
+
+.parcel-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.parcel-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.add-parcel-form {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f6faf8;
+  border-radius: 10px;
+}
+
+.icon-button {
+  width: 42px;
+  min-height: 42px;
+  padding: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+}
+
+.icon-button.danger {
+  color: #9a3023;
+  border-color: #e0b8b0;
+}
+
+.icon-button.danger:hover {
+  color: #721f15;
+  background: #ffebe6;
+}
+
+.legacy-value {
+  grid-column: 1 / -1;
+}
+
+.lot-metadata-card {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfdfc;
+}
+
+.lot-metadata-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.lot-metadata-heading h3 {
+  margin: 0 0 3px;
+}
+
+.lot-business-fields {
+  grid-template-columns: minmax(180px, 1fr) 2fr;
+}
+
+.millieme-details {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.millieme-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.millieme-grid-status {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  margin-top: 18px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.checkbox-label {
+  display: flex;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 9px;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.check-row.product-limit,
+.product-limit-panel {
+  border-color: #bdd3df;
+  background: #f4f9fc;
+}
+
+.inline-action {
+  font-weight: 750;
+  color: var(--green);
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -410,6 +732,12 @@ dd {
   .filter-grid {
     grid-template-columns: repeat(2, 1fr);
   }
+  .reconciliation-metrics {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .proposal-fields {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 
 @media (max-width: 800px) {
@@ -420,13 +748,29 @@ dd {
   }
   .unit-form,
   .review-list form,
-  .layer-grid form {
+  .layer-grid form,
+  .business-grid,
+  .parcel-form,
+  .lot-business-fields,
+  .millieme-fields {
     grid-template-columns: 1fr;
+  }
+  .parcel-form .autosave-note,
+  .legacy-value {
+    grid-column: auto;
+  }
+  .millieme-grid-status {
+    align-items: flex-start;
+    flex-direction: column;
   }
   .summary-grid {
     grid-template-columns: 1fr 1fr;
   }
   .final-validation {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .technical-access {
     align-items: stretch;
     flex-direction: column;
   }
@@ -451,6 +795,12 @@ dd {
   .summary-sections,
   .filter-grid,
   .zone-metrics {
+    grid-template-columns: 1fr;
+  }
+  .reconciliation-metrics,
+  .compact-filters,
+  .proposal-fields,
+  .review-form {
     grid-template-columns: 1fr;
   }
   .upload-row {
