@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Plan — {{ dossier.reference }} — GeoFlow</title>
+  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
+  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+</head>
+<body>
+<main class="shell wide-shell">
+  {% include "_workflow_header.html" %}
+  {% if message %}<div class="alert" role="alert">{{ message }}</div>{% endif %}
+
+  <section class="panel step-panel">
+    <div class="step-heading">
+      <div>
+        <p class="eyebrow">Plan</p>
+        <h2>{% if dossier.plan_importe %}Plan source importé{% else %}Sélectionner le plan source{% endif %}</h2>
+        <p class="muted">DXF ou DWG, analysé localement avec une limite stricte de 50 Mo.</p>
+      </div>
+      <span class="step-number" aria-hidden="true">2</span>
+    </div>
+
+    {% if dossier.plan_importe %}
+    <div class="file-summary">
+      <div class="file-icon" aria-hidden="true">{{ dossier.plan_importe.type_fichier|upper }}</div>
+      <div>
+        <strong>{{ dossier.plan_importe.nom_fichier_original }}</strong>
+        <span>Importé le {{ dossier.plan_importe.date_import.strftime("%d/%m/%Y à %H:%M") }}</span>
+      </div>
+      <span class="badge">{{ dossier.plan_importe.type_fichier|upper }}</span>
+    </div>
+    <div class="warning">
+      Réimporter remplace l’analyse technique et les associations de zones actuelles.
+      Les documents déjà générés restent conservés dans l’historique.
+    </div>
+    {% endif %}
+
+    <form
+      action="/dossiers/{{ dossier.id }}/import"
+      method="post"
+      enctype="multipart/form-data"
+      class="upload-form"
+      {% if dossier.plan_importe %}data-confirm="Réimporter ce plan remplacera l’analyse actuelle et les associations existantes."{% endif %}
+    >
+      <label for="plan-file">Fichier .dxf ou .dwg</label>
+      <div class="upload-row">
+        <input id="plan-file" name="file" type="file" accept=".dxf,.dwg" required data-file-input>
+        <button type="submit">{% if dossier.plan_importe %}Réimporter le plan{% else %}Importer et analyser{% endif %}</button>
+      </div>
+      <small data-file-name>Aucun fichier sélectionné</small>
+    </form>
+  </section>
+
+  <footer class="step-actions">
+    <a class="secondary" href="/dossiers/{{ dossier.id }}/dossier">Précédent</a>
+    {% if dossier.plan_importe %}
+    <a href="/dossiers/{{ dossier.id }}/controle">Suivant</a>
+    {% else %}
+    <button type="button" disabled>Suivant</button>
+    {% endif %}
+  </footer>
+</main>
+</body>
+</html>

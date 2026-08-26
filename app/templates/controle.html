@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Contrôle — {{ dossier.reference }} — GeoFlow</title>
+  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
+  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+</head>
+<body>
+<main class="shell wide-shell">
+  {% include "_workflow_header.html" %}
+  {% if message %}<div class="alert" role="alert">{{ message }}</div>{% endif %}
+  {% set control = dossier.controle_technique %}
+
+  <section class="panel step-panel">
+    <div class="step-heading">
+      <div>
+        <p class="eyebrow">Contrôle</p>
+        <h2>Le plan est-il techniquement exploitable ?</h2>
+        <p class="muted">Vérifiez les informations détectées et choisissez les représentations à conserver.</p>
+      </div>
+      <span class="step-number" aria-hidden="true">3</span>
+    </div>
+    <div class="metrics">
+      <div><span>Version</span><strong>{{ control.version_dxf }}</strong></div>
+      <div><span>Unité détectée</span><strong>{{ control.unite_detectee }}</strong></div>
+      <div><span>Calques</span><strong>{{ control.calques|length }}</strong></div>
+      <div><span>Entités</span><strong>{{ control.nombre_entites }}</strong></div>
+      <div><span>Polylignes calculables</span><strong>{{ control.polylignes_fermees }}</strong></div>
+      <div><span>Emprise</span><strong>{% if control.bbox %}{{ "%.2f"|format(control.bbox.min_x) }}, {{ "%.2f"|format(control.bbox.min_y) }} → {{ "%.2f"|format(control.bbox.max_x) }}, {{ "%.2f"|format(control.bbox.max_y) }}{% else %}Indisponible{% endif %}</strong></div>
+    </div>
+    {% for warning in control.avertissements %}
+    <div class="warning"><span aria-hidden="true">⚠</span> {{ warning }}</div>
+    {% endfor %}
+  </section>
+
+  {% set unit_value = dossier.plan_importe.unite_retenue or dossier.plan_importe.unite_detectee %}
+  {% set unit_ns = namespace(justification="") %}
+  {% for decision in dossier.validations %}
+    {% if decision.champ == "unite_du_plan" %}{% set unit_ns.justification = decision.justification or "" %}{% endif %}
+  {% endfor %}
+  <section class="panel">
+    <p class="eyebrow">Unité</p>
+    <h2>Unité retenue</h2>
+    <p class="muted">La valeur détectée est déjà acceptée. Modifiez-la uniquement si nécessaire.</p>
+    <form
+      action="/dossiers/{{ dossier.id }}/unite"
+      method="post"
+      class="autosave-form unit-form"
+      data-autosave
+      data-unit-form
+      data-detected-unit="{{ dossier.plan_importe.unite_detectee }}"
+    >
+      <label for="retained-unit">Unité retenue
+        <select id="retained-unit" name="unit" required>
+          {% for value, label in unit_options %}
+          <option value="{{ value }}" {% if unit_value == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label
+        for="unit-justification"
+        data-unit-justification
+        {% if unit_value == dossier.plan_importe.unite_detectee %}hidden{% endif %}
+      >
+        Justification de la correction
+        <input
+          id="unit-justification"
+          name="justification"
+          maxlength="300"
+          value="{{ unit_ns.justification }}"
+          {% if unit_value != dossier.plan_importe.unite_detectee %}required{% endif %}
+          aria-describedby="unit-help"
+        >
+        <small id="unit-help">Obligatoire lorsque l’unité retenue diffère de la détection.</small>
+      </label>
+      <span class="inline-save-state" data-form-status aria-live="polite">Enregistré</span>
+    </form>
+  </section>
+
+  <section class="panel">
+    <p class="eyebrow">Planches et représentations</p>
+    <h2>Choisir les versions à retenir</h2>
+    <p class="muted">Chaque changement est enregistré immédiatement, sans validation ligne par ligne.</p>
+    <div class="review-list">
+      {% for planche in dossier.planches %}
+      <form action="/dossiers/{{ dossier.id }}/planches/{{ planche.id }}" method="post" data-autosave>
+        <div>
+          <strong>{{ planche.titre }}</strong>
+          <small>{{ planche.methode_detection }}</small>
+        </div>
+        <label class="visually-hidden" for="planche-{{ planche.id }}">Statut de {{ planche.titre }}</label>
+        <select id="planche-{{ planche.id }}" name="status">
+          <option value="candidate" {% if planche.statut.value == "candidate" %}selected{% endif %}>À vérifier</option>
+          <option value="retenue" {% if planche.statut.value == "retenue" %}selected{% endif %}>Retenue</option>
+          <option value="exclue" {% if planche.statut.value == "exclue" %}selected{% endif %}>Ignorée</option>
+          <option value="abandonnee" {% if planche.statut.value == "abandonnee" %}selected{% endif %}>Abandonnée</option>
+        </select>
+        <span class="inline-save-state" data-form-status aria-live="polite">Enregistré</span>
+      </form>
+      {% endfor %}
+    </div>
+  </section>
+
+  <details class="panel">
+    <summary>Inventaire des calques <span class="badge">{{ control.calques|length }}</span></summary>
+    <p class="muted">Les calques sensibles sont signalés, mais jamais exclus automatiquement.</p>
+    <label class="filter" for="layer-search">Rechercher un calque
+      <input id="layer-search" type="search" placeholder="Nom du calque…" data-layer-filter>
+    </label>
+    <div class="layer-grid">
+      {% for layer in control.calques %}
+      <form
+        action="/dossiers/{{ dossier.id }}/calques"
+        method="post"
+        data-autosave
+        data-layer-row
+        data-search="{{ layer.nom }}"
+        class="{% if layer.exclusion_suggeree or layer.nom|lower in ["poubelle", "00"] %}suggested{% endif %}"
+      >
+        <input type="hidden" name="layer_name" value="{{ layer.nom }}">
+        <div>
+          <strong>{{ layer.nom }}</strong>
+          <small>Visible : {{ "oui" if layer.visible else "non" }} · Gelé : {{ "oui" if layer.gele else "non" }} · Tracé : {{ "oui" if layer.trace else "non" }}</small>
+        </div>
+        <label class="visually-hidden" for="layer-{{ loop.index }}">Statut du calque {{ layer.nom }}</label>
+        <select id="layer-{{ loop.index }}" name="status">
+          <option value="candidate" {% if layer.statut.value == "candidate" %}selected{% endif %}>À vérifier</option>
+          <option value="retenue" {% if layer.statut.value == "retenue" %}selected{% endif %}>Retenu</option>
+          <option value="exclue" {% if layer.statut.value == "exclue" %}selected{% endif %}>Exclu</option>
+        </select>
+        <span class="inline-save-state" data-form-status aria-live="polite">Enregistré</span>
+      </form>
+      {% endfor %}
+    </div>
+  </details>
+
+  <footer class="step-actions">
+    <a class="secondary" href="/dossiers/{{ dossier.id }}/plan">Précédent</a>
+    <a href="/dossiers/{{ dossier.id }}/lots">Suivant</a>
+  </footer>
+</main>
+</body>
+</html>

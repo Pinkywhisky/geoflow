@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lots & surfaces — {{ dossier.reference }} — GeoFlow</title>
+  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
+  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+</head>
+<body>
+<main class="shell wide-shell">
+  {% include "_workflow_header.html" %}
+  {% if message %}<div class="alert" role="alert">{{ message }}</div>{% endif %}
+
+  <section class="panel step-panel">
+    <div class="step-heading">
+      <div>
+        <p class="eyebrow">Lots & surfaces</p>
+        <h2>Associer les zones utiles</h2>
+        <p class="muted">Une zone est une surface issue du plan. Un lot peut regrouper plusieurs zones, niveaux ou bâtiments.</p>
+      </div>
+      <span class="step-number" aria-hidden="true">4</span>
+    </div>
+    <div class="metrics zone-metrics">
+      <div><span>Candidates</span><strong>{{ counts.total }}</strong></div>
+      <div><span>Retenues</span><strong>{{ counts.retained }}</strong></div>
+      <div><span>Affectées</span><strong>{{ counts.assigned }}</strong></div>
+      <div><span>À traiter</span><strong>{{ counts.untreated }}</strong></div>
+      <div><span>Exclues / abandonnées</span><strong>{{ counts.excluded }}</strong></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">File de travail</p>
+        <h2>Zones non affectées en priorité</h2>
+      </div>
+      <span class="badge">{{ result_count }} résultat(s)</span>
+    </div>
+    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid">
+      <label for="zone-q">Recherche
+        <input id="zone-q" name="q" type="search" value="{{ filters.q }}" placeholder="Calque, handle, texte…">
+      </label>
+      <label for="zone-layer">Calque
+        <select id="zone-layer" name="layer">
+          <option value="">Tous</option>
+          {% for layer in layer_options %}<option value="{{ layer }}" {% if filters.layer == layer %}selected{% endif %}>{{ layer }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="zone-status">État
+        <select id="zone-status" name="status">
+          <option value="">Tous</option>
+          <option value="candidate" {% if filters.status == "candidate" %}selected{% endif %}>À vérifier</option>
+          <option value="retenue" {% if filters.status == "retenue" %}selected{% endif %}>Retenue</option>
+          <option value="exclue" {% if filters.status == "exclue" %}selected{% endif %}>Exclue</option>
+          <option value="abandonnee" {% if filters.status == "abandonnee" %}selected{% endif %}>Abandonnée</option>
+        </select>
+      </label>
+      <label for="zone-assignment">Affectation
+        <select id="zone-assignment" name="assignment">
+          <option value="unassigned" {% if filters.assignment == "unassigned" %}selected{% endif %}>Non affectées</option>
+          <option value="assigned" {% if filters.assignment == "assigned" %}selected{% endif %}>Déjà affectées</option>
+          <option value="all" {% if filters.assignment == "all" %}selected{% endif %}>Toutes</option>
+        </select>
+      </label>
+      <label for="zone-building">Bâtiment
+        <select id="zone-building" name="building">
+          <option value="">Tous</option>
+          {% for item in dossier.batiments %}<option value="{{ item.id }}" {% if filters.building == item.id %}selected{% endif %}>{{ item.code }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="zone-level">Niveau
+        <select id="zone-level" name="level">
+          <option value="">Tous</option>
+          {% for item in dossier.niveaux %}<option value="{{ item.id }}" {% if filters.level == item.id %}selected{% endif %}>{{ item.code }}</option>{% endfor %}
+        </select>
+      </label>
+      <label for="zone-lot">Lot
+        <select id="zone-lot" name="lot">
+          <option value="">Tous</option>
+          {% for item in dossier.lots %}<option value="{{ item.id }}" {% if filters.lot == item.id %}selected{% endif %}>Lot {{ item.numero }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Filtrer</button>
+    </form>
+
+    <div class="candidate-list">
+      {% for row in candidate_rows %}
+      {% set candidate = row.candidate %}
+      {% set zone = row.zone %}
+      <article class="candidate {% if zone %}resolved{% endif %}">
+        <div class="candidate-head">
+          <div>
+            <span class="badge">{{ candidate.calque }}</span>
+            <strong>{{ candidate.id }}</strong>
+            <small>Handle {{ candidate.handle_dxf }} · {{ candidate.type_entite }} · {{ candidate.planche_region }}</small>
+          </div>
+          <strong class="area">{% if candidate.surface_geometrique_m2 is not none %}{{ "%.2f"|format(candidate.surface_geometrique_m2) }} m²{% else %}Non calculable{% endif %}</strong>
+        </div>
+        <p class="provenance">Source : {{ candidate.provenance.fichier_source }} · détection : {{ candidate.provenance.methode_detection }}</p>
+        {% if candidate.textes_proches %}<p class="nearby">Textes proches : {{ candidate.textes_proches|join(" · ") }}</p>{% endif %}
+
+        {% if zone %}
+        <div class="resolved-summary">
+          <strong>Zone affectée</strong>
+          <span>{{ zone.batiment_id }} · {{ zone.niveau_id }} · {{ zone.lot_id or "sans lot" }}</span>
+          <span>{{ "%.2f"|format(zone.surface_retenue_m2) }} m² retenus</span>
+        </div>
+        {% else %}
+        <form action="/dossiers/{{ dossier.id }}/zones/{{ candidate.id }}" method="post" class="zone-form" data-zone-form data-geometric-surface="{{ candidate.surface_geometrique_m2 }}">
+          <label>Bâtiment
+            <input name="building_code" required maxlength="60" placeholder="A">
+          </label>
+          <label>Niveau
+            <input name="level_code" required maxlength="60" placeholder="RdC ou Sous-sol">
+          </label>
+          <label>Lot
+            <input name="lot_number" maxlength="60" placeholder="1">
+            <small>Optionnel uniquement pour une partie commune.</small>
+          </label>
+          <label>Catégorie
+            <select name="category">{% for value, label in categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
+          </label>
+          <label>Surface retenue
+            <input name="retained_surface" inputmode="decimal" value="{{ "%.3f"|format(candidate.surface_geometrique_m2) }}" required>
+          </label>
+          <label class="wide-field" data-surface-justification hidden>
+            Justification de la correction
+            <input name="justification" maxlength="300" placeholder="Obligatoire si la surface retenue diffère">
+          </label>
+          <button type="submit">Associer la zone</button>
+        </form>
+        {% endif %}
+      </article>
+      {% else %}
+      <div class="empty-state">
+        <strong>Aucune zone ne correspond à ces filtres.</strong>
+        <a href="/dossiers/{{ dossier.id }}/lots?assignment=unassigned">Afficher les zones non affectées</a>
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if page_count > 1 %}
+    <nav class="pagination" aria-label="Pagination des zones">
+      {% if previous_url %}<a class="secondary" href="{{ previous_url }}">Précédent</a>{% else %}<span></span>{% endif %}
+      <span>Page {{ current_page }} sur {{ page_count }}</span>
+      {% if next_url %}<a class="secondary" href="{{ next_url }}">Suivant</a>{% endif %}
+    </nav>
+    {% endif %}
+  </section>
+
+  {% if dossier.lots %}
+  <section class="panel">
+    <p class="eyebrow">Lots constitués</p>
+    <h2>{{ dossier.lots|length }} lot(s)</h2>
+    <div class="lot-stack">
+      {% for lot in dossier.lots %}
+      <div class="lot-summary">
+        <strong>Lot {{ lot.numero }}</strong>
+        <span>{{ lot.zone_ids|length }} zone(s) · {{ lot.niveau_ids|length }} niveau(x) · {{ lot.batiment_ids|length }} bâtiment(s)</span>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <footer class="step-actions">
+    <a class="secondary" href="/dossiers/{{ dossier.id }}/controle">Précédent</a>
+    <a href="/dossiers/{{ dossier.id }}/synthese">Suivant</a>
+  </footer>
+</main>
+</body>
+</html>

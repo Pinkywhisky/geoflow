@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Document — {{ dossier.reference }} — GeoFlow</title>
+  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
+  <link rel="stylesheet" href="{{ url_for("static", path="/document.css") }}">
+</head>
+<body>
+<main class="shell wide-shell">
+  {% include "_workflow_header.html" %}
+  {% if message %}<div class="alert" role="alert">{{ message }}</div>{% endif %}
+
+  <section class="panel step-panel">
+    <div class="step-heading">
+      <div>
+        <p class="eyebrow">Document</p>
+        <h2>Générer le premier brouillon Word</h2>
+        <p class="muted">Le document utilise exclusivement les données canoniques validées. Il ne relit ni le DXF ni le DWG.</p>
+      </div>
+      <span class="step-number" aria-hidden="true">6</span>
+    </div>
+    <div class="metrics document-metrics">
+      <div><span>Référence</span><strong>{{ dossier.reference }}</strong></div>
+      <div><span>Bâtiments</span><strong>{{ dossier.batiments|length }}</strong></div>
+      <div><span>Lots</span><strong>{{ dossier.lots|length }}</strong></div>
+      <div><span>Zones retenues</span><strong>{{ readiness.retained_zone_count }}</strong></div>
+      <div><span>Surface retenue</span><strong>{{ "%.2f"|format(readiness.retained_surface_m2) }} m²</strong></div>
+      <div><span>Corrections</span><strong>{{ readiness.corrected_surface_count }}</strong></div>
+    </div>
+  </section>
+
+  {% if not validation_current %}
+  <section class="panel blocker-panel">
+    <p class="eyebrow">Étape verrouillée</p>
+    <h2>Dossier à valider avant génération</h2>
+    <p>Revenez à la Synthèse, corrigez les éventuels blocages puis validez les données du dossier.</p>
+    <a class="secondary" href="/dossiers/{{ dossier.id }}/synthese">Retour à la synthèse</a>
+  </section>
+  {% else %}
+    {% if readiness.warnings %}
+    <section class="panel">
+      <p class="eyebrow">Avertissements documentaires</p>
+      <ul class="warning-list">{% for item in readiness.warnings %}<li>{{ item }}</li>{% endfor %}</ul>
+    </section>
+    {% endif %}
+
+    <section class="panel generation-panel">
+      <div>
+        <p class="eyebrow">Sortie</p>
+        <h2>Brouillon Word versionné</h2>
+        <p class="muted">Le DOCX, son snapshot JSON et son empreinte SHA-256 seront conservés dans l’historique.</p>
+      </div>
+      <form action="/dossiers/{{ dossier.id }}/documents/generate" method="post">
+        <button type="submit" {% if not readiness.can_generate %}disabled aria-disabled="true"{% endif %}>Générer le brouillon Word</button>
+      </form>
+    </section>
+  {% endif %}
+
+  {% if dossier.generations %}
+  <section class="panel">
+    <p class="eyebrow">Historique</p>
+    <h2>Documents générés</h2>
+    <div class="dossier-list">
+      {% for item in dossier.generations|reverse %}
+      <a href="/dossiers/{{ dossier.id }}/documents/{{ item.id }}/download">
+        <strong>{{ item.nom_fichier }}</strong>
+        <span>{{ item.statut }} · {{ item.date_generation.strftime("%d/%m/%Y %H:%M") }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <footer class="step-actions">
+    <a class="secondary" href="/dossiers/{{ dossier.id }}/synthese">Précédent</a>
+    <span></span>
+  </footer>
+</main>
+</body>
+</html>

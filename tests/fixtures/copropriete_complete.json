@@ -1,0 +1,291 @@
+{
+  "schema_version": "1.1",
+  "id": "dossier-demo-complet",
+  "reference": "DEMO-2026-001",
+  "type": "copropriete",
+  "statut": "valide",
+  "adresse": "10 avenue des Tilleuls",
+  "commune": "Ville-sur-Rivière",
+  "departement": "Département Exemple",
+  "references_cadastrales": ["Section AB n° 101", "Section AB n° 102"],
+  "date_plan": "15/06/2026",
+  "plan_importe": {
+    "nom_fichier_original": "plan_demo.dxf",
+    "type_fichier": "dxf",
+    "version_dxf": "AC1027",
+    "unite_detectee": "metre",
+    "unite_retenue": "metre",
+    "unite_confirmee": true,
+    "bbox": {
+      "min_x": 0.0,
+      "min_y": 0.0,
+      "max_x": 80.0,
+      "max_y": 60.0
+    },
+    "date_import": "2026-06-16T09:00:00Z"
+  },
+  "controle_technique": {
+    "version_dxf": "AC1027",
+    "unite_detectee": "metre",
+    "bbox": {
+      "min_x": 0.0,
+      "min_y": 0.0,
+      "max_x": 80.0,
+      "max_y": 60.0
+    },
+    "calques": [],
+    "layouts": [],
+    "types_entites": {
+      "LWPOLYLINE": 4
+    },
+    "textes": [],
+    "polylignes_fermees": 4,
+    "zones_candidates": [],
+    "avertissements": []
+  },
+  "planches": [
+    {
+      "id": "planche-principale",
+      "titre": "Planche principale",
+      "bbox_region": null,
+      "statut": "retenue",
+      "methode_detection": "validation_utilisateur"
+    }
+  ],
+  "batiments": [
+    {
+      "id": "batiment-a",
+      "code": "A",
+      "libelle": "Corps principal"
+    },
+    {
+      "id": "batiment-b",
+      "code": "B",
+      "libelle": "Aile secondaire"
+    }
+  ],
+  "niveaux": [
+    {
+      "id": "niveau-a-rdc",
+      "batiment_id": "batiment-a",
+      "code": "RdC",
+      "libelle": "Rez-de-chaussée"
+    },
+    {
+      "id": "niveau-a-ss",
+      "batiment_id": "batiment-a",
+      "code": "Sous-sol",
+      "libelle": null
+    },
+    {
+      "id": "niveau-b-r1",
+      "batiment_id": "batiment-b",
+      "code": "R+1",
+      "libelle": "Premier étage"
+    }
+  ],
+  "lots": [
+    {
+      "id": "lot-1",
+      "numero": "1",
+      "batiment_ids": ["batiment-a"],
+      "niveau_ids": ["niveau-a-rdc", "niveau-a-ss"],
+      "usage": "Habitation",
+      "designation": "Appartement et cave",
+      "zone_ids": ["zone-lot-1-principale", "zone-lot-1-cave"]
+    },
+    {
+      "id": "lot-2",
+      "numero": "2",
+      "batiment_ids": ["batiment-b"],
+      "niveau_ids": ["niveau-b-r1"],
+      "usage": null,
+      "designation": "Local au premier étage",
+      "zone_ids": ["zone-lot-2"]
+    }
+  ],
+  "zones": [
+    {
+      "id": "zone-lot-1-principale",
+      "batiment_id": "batiment-a",
+      "niveau_id": "niveau-a-rdc",
+      "lot_id": "lot-1",
+      "categorie": "principale",
+      "surface_geometrique_m2": 80.0,
+      "surface_retenue_m2": 80.0,
+      "statut": "retenue",
+      "geometrie_source": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "A1",
+        "calque": "LOTS",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "sommets": [],
+        "provenance": {
+          "fichier_source": "plan_demo.dxf",
+          "handle_dxf": "A1",
+          "calque": "LOTS",
+          "type_entite": "LWPOLYLINE",
+          "planche_region": "planche-principale",
+          "methode_detection": "validation_utilisateur"
+        }
+      },
+      "decision_surface": {
+        "champ": "surface_retenue_m2",
+        "propose": 80.0,
+        "retenu": 80.0,
+        "justification": null,
+        "horodatage": "2026-06-17T10:00:00Z"
+      },
+      "provenance_association": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "A1",
+        "calque": "LOTS",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "methode_detection": "saisie_utilisateur"
+      }
+    },
+    {
+      "id": "zone-lot-1-cave",
+      "batiment_id": "batiment-a",
+      "niveau_id": "niveau-a-ss",
+      "lot_id": "lot-1",
+      "categorie": "secondaire_annexe",
+      "surface_geometrique_m2": 20.0,
+      "surface_retenue_m2": 20.0,
+      "statut": "retenue",
+      "geometrie_source": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "A2",
+        "calque": "ANNEXES",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "sommets": [],
+        "provenance": {
+          "fichier_source": "plan_demo.dxf",
+          "handle_dxf": "A2",
+          "calque": "ANNEXES",
+          "type_entite": "LWPOLYLINE",
+          "planche_region": "planche-principale",
+          "methode_detection": "validation_utilisateur"
+        }
+      },
+      "decision_surface": {
+        "champ": "surface_retenue_m2",
+        "propose": 20.0,
+        "retenu": 20.0,
+        "justification": null,
+        "horodatage": "2026-06-17T10:01:00Z"
+      },
+      "provenance_association": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "A2",
+        "calque": "ANNEXES",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "methode_detection": "saisie_utilisateur"
+      }
+    },
+    {
+      "id": "zone-lot-2",
+      "batiment_id": "batiment-b",
+      "niveau_id": "niveau-b-r1",
+      "lot_id": "lot-2",
+      "categorie": "principale",
+      "surface_geometrique_m2": 72.0,
+      "surface_retenue_m2": 70.0,
+      "statut": "retenue",
+      "geometrie_source": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "B1",
+        "calque": "LOTS",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "sommets": [],
+        "provenance": {
+          "fichier_source": "plan_demo.dxf",
+          "handle_dxf": "B1",
+          "calque": "LOTS",
+          "type_entite": "LWPOLYLINE",
+          "planche_region": "planche-principale",
+          "methode_detection": "validation_utilisateur"
+        }
+      },
+      "decision_surface": {
+        "champ": "surface_retenue_m2",
+        "propose": 72.0,
+        "retenu": 70.0,
+        "justification": "Déduction d'une trémie mesurée et validée.",
+        "horodatage": "2026-06-17T10:02:00Z"
+      },
+      "provenance_association": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "B1",
+        "calque": "LOTS",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "methode_detection": "saisie_utilisateur"
+      }
+    },
+    {
+      "id": "zone-commune",
+      "batiment_id": "batiment-a",
+      "niveau_id": "niveau-a-rdc",
+      "lot_id": null,
+      "categorie": "commune",
+      "surface_geometrique_m2": 12.0,
+      "surface_retenue_m2": 12.0,
+      "statut": "retenue",
+      "geometrie_source": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "C1",
+        "calque": "COMMUNS",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "sommets": [],
+        "provenance": {
+          "fichier_source": "plan_demo.dxf",
+          "handle_dxf": "C1",
+          "calque": "COMMUNS",
+          "type_entite": "LWPOLYLINE",
+          "planche_region": "planche-principale",
+          "methode_detection": "validation_utilisateur"
+        }
+      },
+      "decision_surface": {
+        "champ": "surface_retenue_m2",
+        "propose": 12.0,
+        "retenu": 12.0,
+        "justification": null,
+        "horodatage": "2026-06-17T10:03:00Z"
+      },
+      "provenance_association": {
+        "fichier_source": "plan_demo.dxf",
+        "handle_dxf": "C1",
+        "calque": "COMMUNS",
+        "type_entite": "LWPOLYLINE",
+        "planche_region": "planche-principale",
+        "methode_detection": "saisie_utilisateur"
+      }
+    }
+  ],
+  "validations": [],
+  "droits_particuliers": [
+    {
+      "id": "droit-cour",
+      "description": "Droit d'usage privatif d'une partie de cour à confirmer",
+      "lot_ids": ["lot-1"],
+      "statut_validation": "a_confirmer"
+    }
+  ],
+  "servitudes": [
+    {
+      "id": "servitude-passage",
+      "description": "Passage mentionné dans le dossier, qualification juridique à confirmer",
+      "statut_validation": "a_confirmer"
+    }
+  ],
+  "milliemes": [],
+  "generations": []
+}

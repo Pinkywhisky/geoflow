@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Synthèse — {{ dossier.reference }} — GeoFlow</title>
+  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
+  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+</head>
+<body>
+<main class="shell wide-shell">
+  {% include "_workflow_header.html" %}
+  {% if message %}<div class="alert" role="alert">{{ message }}</div>{% endif %}
+
+  <section class="panel step-panel">
+    <div class="step-heading">
+      <div>
+        <p class="eyebrow">Synthèse</p>
+        <h2>Vue d’ensemble du dossier</h2>
+        <p class="muted">Contrôlez les données préparées par GeoFlow avant leur validation unique.</p>
+      </div>
+      <span class="step-number" aria-hidden="true">5</span>
+    </div>
+
+    <div class="summary-sections">
+      <section>
+        <h3>Dossier</h3>
+        <dl><div><dt>Référence</dt><dd>{{ dossier.reference }}</dd></div><div><dt>Type</dt><dd>Copropriété</dd></div></dl>
+      </section>
+      <section>
+        <h3>Plan</h3>
+        <dl>
+          <div><dt>Fichier</dt><dd><span class="state-icon ok" aria-label="Conforme">✓</span> {{ dossier.plan_importe.type_fichier|upper }} importé</dd></div>
+          <div><dt>Version</dt><dd>{{ dossier.plan_importe.version_dxf }}</dd></div>
+          <div><dt>Unité</dt><dd>{{ dossier.plan_importe.unite_retenue }}</dd></div>
+        </dl>
+      </section>
+      <section>
+        <h3>Structure</h3>
+        <dl><div><dt>Bâtiments</dt><dd>{{ dossier.batiments|length }}</dd></div><div><dt>Niveaux</dt><dd>{{ dossier.niveaux|length }}</dd></div><div><dt>Lots</dt><dd>{{ dossier.lots|length }}</dd></div></dl>
+      </section>
+      <section>
+        <h3>Surfaces</h3>
+        <dl>
+          <div><dt>Zones retenues</dt><dd>{{ readiness.retained_zone_count }}</dd></div>
+          <div><dt>Surface totale</dt><dd>{{ "%.2f"|format(readiness.retained_surface_m2) }} m²</dd></div>
+          <div><dt>Corrections</dt><dd>{{ readiness.corrected_surface_count }}</dd></div>
+        </dl>
+      </section>
+    </div>
+  </section>
+
+  <section class="panel checks-panel">
+    <div class="section-heading">
+      <div><p class="eyebrow">Contrôles</p><h2>État de préparation</h2></div>
+      {% if validation_current %}<span class="status-pill ok">✓ Validé</span>{% elif readiness.blockers %}<span class="status-pill blocked">● Bloquant</span>{% else %}<span class="status-pill warning">⚠ À valider</span>{% endif %}
+    </div>
+
+    {% if not readiness.blockers %}
+    <div class="check-row ok"><span aria-hidden="true">✓</span><div><strong>Données métier cohérentes</strong><p>Les conditions nécessaires à la génération documentaire sont remplies.</p></div></div>
+    {% endif %}
+    {% for item in readiness.blockers %}
+    <div class="check-row blocked"><span aria-hidden="true">●</span><div><strong>Blocage</strong><p>{{ item }}</p></div></div>
+    {% endfor %}
+    {% for item in readiness.warnings %}
+    <div class="check-row warning"><span aria-hidden="true">⚠</span><div><strong>Avertissement</strong><p>{{ item }}</p></div></div>
+    {% endfor %}
+  </section>
+
+  <section class="panel final-validation">
+    <div>
+      <p class="eyebrow">Validation des données GeoFlow</p>
+      <h2>{% if validation_current %}Dossier validé{% else %}Prêt pour la validation finale ?{% endif %}</h2>
+      <p class="muted">Cette action confirme les données du dossier. Elle ne constitue pas une validation juridique du futur document.</p>
+    </div>
+    {% if validation_current %}
+    <div class="validated-block">
+      <span class="status-pill ok">✓ Validé</span>
+      {% if dossier.date_validation_donnees %}<small>{{ dossier.date_validation_donnees.strftime("%d/%m/%Y à %H:%M") }}</small>{% endif %}
+    </div>
+    {% else %}
+    <form action="/dossiers/{{ dossier.id }}/synthese/validate" method="post">
+      <button type="submit" {% if readiness.blockers %}disabled aria-disabled="true"{% endif %}>Valider le dossier</button>
+    </form>
+    {% endif %}
+  </section>
+
+  <footer class="step-actions">
+    <a class="secondary" href="/dossiers/{{ dossier.id }}/lots">Précédent</a>
+    {% if validation_current %}<a href="/dossiers/{{ dossier.id }}/documents">Suivant</a>{% else %}<button type="button" disabled>Suivant</button>{% endif %}
+  </footer>
+</main>
+</body>
+</html>

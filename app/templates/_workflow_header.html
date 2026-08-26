@@ -1,0 +1,32 @@
+<header class="brand workflow-brand">
+  <a class="mark" href="/" aria-label="Accueil GeoFlow">G</a>
+  <div class="brand-copy">
+    <h1>{{ dossier.reference }}</h1>
+    <p>Copropriété · {{ workflow_status }}</p>
+  </div>
+  <div class="save-state" data-save-status role="status" aria-live="polite">
+    <span aria-hidden="true">✓</span> Modifications enregistrées
+  </div>
+  {% if dossier.plan_importe %}
+  <a class="secondary export-action" href="/dossiers/{{ dossier.id }}/export">Exporter JSON</a>
+  {% endif %}
+</header>
+
+<nav class="steps" aria-label="Étapes du dossier">
+  {% for step in steps %}
+    {% if step.href %}
+    <a
+      href="{{ step.href }}"
+      class="{% if step.active %}current{% elif step.completed %}done{% endif %}"
+      {% if step.active %}aria-current="step"{% endif %}
+    >
+      <span aria-hidden="true">{% if step.completed and not step.active %}✓{% elif step.active %}●{% else %}○{% endif %}</span>
+      {{ step.label }}
+    </a>
+    {% else %}
+    <span class="locked" aria-disabled="true">
+      <span aria-hidden="true">🔒</span> {{ step.label }}
+    </span>
+    {% endif %}
+  {% endfor %}
+</nav>
