@@ -144,6 +144,12 @@ docker compose run --rm geoflow python -m pytest -q
 
 Les tests couvrent le moteur DXF, les routes HTTP, la conversion DWG isolée, l’assistant, l’autosave, la pagination, l’invalidation après modification, la suppression des dossiers, le contexte documentaire, le contenu et l’hygiène OOXML, la persistance du snapshot et la confidentialité. La v0.4.2 ajoute plus de vingt scénarios synthétiques de réconciliation ; la v0.4.3 couvre le modèle métier rétrocompatible, les parcelles multiples, l’édition des lots, les statuts de millièmes, la règle des 1000, les avertissements actionnables et les marges du DOCX. Les tests versionnés utilisent uniquement des données synthétiques. Les dossiers sous `samples/private/` restent exclus de Git et du contexte Docker.
 
+## Intégration continue
+
+GitHub Actions exécute les tests publics sous Python 3.12, vérifie les erreurs de whitespace Git et construit l’image Docker à chaque push ou pull request visant `main`. La CI n’installe pas ODA File Converter et n’utilise aucune donnée privée.
+
+Les recettes métier de référence restent réservées à la QA locale privée. Elles ne font pas partie du socle public automatisé et les éventuels XLSX associés ne constituent pas une dépendance produit.
+
 ## Limites volontaires de la v0.4.3
 
 Le document produit reste un brouillon technique : aucune validation juridique, aucun calcul de millièmes, aucun import de grille depuis XLSX, aucune qualification automatique des droits ou servitudes, aucune table des matières automatique et aucune reproduction exhaustive d’un acte existant. Les millièmes sont uniquement repris des valeurs saisies et validées par l’utilisateur. La reconnaissance parfaite des cartouches et feuilles reste également hors périmètre.
