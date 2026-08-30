@@ -15,3 +15,5 @@ data/
 *.dwg
 *.deb*
 *mshield
+# Local Cloudflare Tunnel credential
+secrets/cloudflare_tunnel_token.txt

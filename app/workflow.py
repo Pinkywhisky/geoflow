@@ -33,6 +33,7 @@ from app.domain import (
 )
 from app.domain.models import StatutRevue
 from app.dxf import apply_confirmed_unit
+from app.dxf.technical import meters_per_unit
 from app.reconciliation import reconcile_dossier
 
 
@@ -266,13 +267,14 @@ def attach_import(
     planches: list[Planche],
 ) -> None:
     clean_filename = safe_filename(filename)
+    unit_supported = meters_per_unit(control.unite_detectee) is not None
     dossier.plan_importe = PlanImporte(
         nom_fichier_original=clean_filename,
         type_fichier=file_type,
         version_dxf=control.version_dxf,
         unite_detectee=control.unite_detectee,
-        unite_retenue=control.unite_detectee,
-        unite_confirmee=True,
+        unite_retenue=control.unite_detectee if unit_supported else None,
+        unite_confirmee=unit_supported,
         bbox=control.bbox,
     )
     # Importing another plan starts a new geometric review in this MVP.
@@ -283,14 +285,17 @@ def attach_import(
     dossier.lots = []
     dossier.zones = []
     dossier.reconciliation = None
-    apply_confirmed_unit(control, control.unite_detectee)
-    dossier.validations = [
-        DecisionValidation(
-            champ="unite_du_plan",
-            propose=control.unite_detectee,
-            retenu=control.unite_detectee,
-        )
-    ]
+    if unit_supported:
+        apply_confirmed_unit(control, control.unite_detectee)
+        dossier.validations = [
+            DecisionValidation(
+                champ="unite_du_plan",
+                propose=control.unite_detectee,
+                retenu=control.unite_detectee,
+            )
+        ]
+    else:
+        dossier.validations = []
     dossier.statut = "controle_technique"
     reconcile_dossier(dossier)
     invalidate_data_validation(dossier)

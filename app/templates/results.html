@@ -1,2 +1,188 @@
-<!doctype html><html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Résultat — GeoFlow</title><link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}"></head>
-<body><main class="shell"><header class="brand"><a class="mark" href="/">G</a><div><h1>GeoFlow</h1><p>Analyse rapide</p></div></header><section class="panel"><h2>Résultat de l’analyse</h2><p>Fichier : <strong>{{ filename }}</strong></p><p class="success">{{ polylines|length }} polyligne(s) fermée(s) détectée(s)</p><div class="table-wrap"><table><thead><tr><th>Type</th><th>Calque</th><th class="number">Surface</th></tr></thead><tbody>{% for item in polylines %}<tr><td>{{ item.entity_type }}</td><td>{{ item.layer }}</td><td class="number">{{ "%.2f"|format(item.area) }} m²</td></tr>{% endfor %}</tbody><tfoot><tr><th colspan="2">Surface totale</th><th class="number">{{ "%.2f"|format(total_area) }} m²</th></tr></tfoot></table></div><a class="secondary" href="/">Retour à l’accueil</a></section></main></body></html>
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Diagnostic — {{ dossier.plan_importe.nom_fichier_original }} — GeoFlow</title>
+  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
+  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+</head>
+<body>
+<main class="shell wide-shell quick-diagnostic">
+  <header class="brand">
+    <a class="mark" href="/">G</a>
+    <div><h1>GeoFlow</h1><p>Analyse rapide · pré-diagnostic</p></div>
+    <a class="secondary action-right" href="/">Nouvelle analyse</a>
+  </header>
+
+  <section class="panel diagnostic-hero understanding-{{ diagnostic.understanding.key }}">
+    <div class="diagnostic-title">
+      <div>
+        <p class="eyebrow">Analyse terminée en {{ "%.2f"|format(analysis.duration_seconds) }} s</p>
+        <h2>{{ dossier.plan_importe.nom_fichier_original }}</h2>
+        <p class="diagnostic-conclusion">{{ diagnostic.conclusion }}</p>
+      </div>
+      <div class="diagnostic-verdict">
+        <span>Compréhension du plan</span>
+        <strong>{{ diagnostic.understanding.label }}</strong>
+      </div>
+    </div>
+    <p class="diagnostic-reason">{{ diagnostic.understanding.reason }}</p>
+    <div class="diagnostic-summary-grid">
+      <div><span>Fichier</span><strong>✓ {{ dossier.plan_importe.type_fichier|upper }} lisible</strong></div>
+      <div><span>Unité détectée</span><strong>{% if dossier.plan_importe.unite_confirmee %}✓ {{ dossier.plan_importe.unite_detectee|replace("_", " ") }}{% else %}À confirmer{% endif %}</strong></div>
+      <div><span>Lots probables</span><strong>{{ diagnostic.counts.proposals }}</strong></div>
+      <div><span>Intervention humaine</span><strong class="workload-{{ diagnostic.workload.key }}">{{ diagnostic.workload.label }}</strong></div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div><p class="eyebrow">Lecture métier</p><h2>Ce que GeoFlow a compris</h2></div>
+      <span class="status-pill {% if diagnostic.profile %}ok{% else %}warning{% endif %}">{% if diagnostic.profile %}Profil {{ diagnostic.profile }} reconnu{% else %}Convention de calques inconnue{% endif %}</span>
+    </div>
+    <div class="metrics quick-metrics">
+      <div><span>Contours analysés</span><strong>{{ diagnostic.counts.contours }}</strong></div>
+      <div><span>Zones métier candidates</span><strong>{{ diagnostic.counts.business }}</strong></div>
+      <div><span>Lots proposés</span><strong>{{ diagnostic.counts.proposals }}</strong></div>
+      <div><span>Auto-vérifiés</span><strong>{{ diagnostic.counts.auto }}</strong></div>
+      <div><span>À confirmer / non résolus</span><strong>{{ diagnostic.counts.review }}</strong></div>
+      <div><span>Contradictions</span><strong>{{ diagnostic.counts.contradictions }}</strong></div>
+      <div><span>Exclus techniquement</span><strong>{{ diagnostic.counts.excluded }}</strong></div>
+    </div>
+    <div class="detected-structure">
+      <div><span>Bâtiments</span><strong>{% if diagnostic.structure.buildings %}{{ diagnostic.structure.buildings }} détecté(s){% else %}Non déterminés automatiquement{% endif %}</strong></div>
+      <div><span>Niveaux</span><strong>{% if diagnostic.structure.levels %}{{ diagnostic.structure.levels }} détecté(s){% else %}À confirmer dans le dossier{% endif %}</strong></div>
+      <div><span>Planches exploitables</span><strong>{{ diagnostic.structure.planches }} détectée(s)</strong></div>
+    </div>
+  </section>
+
+  <section class="diagnostic-columns">
+    <article class="panel">
+      <p class="eyebrow">Conventions métier</p>
+      <h2>Surfaces détectées</h2>
+      <dl class="category-summary">
+        <div><dt>Principales</dt><dd>{{ diagnostic.categories.principale }} zone(s)</dd></div>
+        <div><dt>Annexes</dt><dd>{{ diagnostic.categories.annexe }} zone(s)</dd></div>
+        <div><dt>Communes probables</dt><dd>{{ diagnostic.categories.commune }} zone(s)</dd></div>
+        <div><dt>Autres métier</dt><dd>{{ diagnostic.categories.autre }} zone(s)</dd></div>
+        <div><dt>Exclues techniquement</dt><dd>{{ diagnostic.categories.exclue }} zone(s)</dd></div>
+      </dl>
+    </article>
+    <article class="panel points-to-check">
+      <p class="eyebrow">Priorité</p>
+      <h2>Points à vérifier</h2>
+      <ul>
+        {% for anomaly in diagnostic.anomalies %}
+        <li class="{{ anomaly.level }}"><span aria-hidden="true">{% if anomaly.level == "ok" %}✓{% else %}⚠{% endif %}</span>{{ anomaly.message }}</li>
+        {% else %}
+        <li class="ok"><span aria-hidden="true">✓</span>Aucun point critique détecté.</li>
+        {% endfor %}
+      </ul>
+      {% if diagnostic.surface_anomalies %}
+      <p class="surface-alert">{{ diagnostic.surface_anomalies }} surface(s) dépassent les tolérances de rapprochement existantes.</p>
+      {% elif diagnostic.counts.proposals %}
+      <p class="success">Toutes les surfaces annotées rapprochées sont cohérentes.</p>
+      {% endif %}
+    </article>
+  </section>
+
+  <section class="panel quick-lots">
+    <div class="section-heading">
+      <div><p class="eyebrow">Vue compacte</p><h2>Lots proposés</h2></div>
+      <span class="badge">{{ diagnostic.lots|length }} lot(s)</span>
+    </div>
+    {% if diagnostic.lots %}
+    <div class="quick-lot-grid">
+      {% for row in diagnostic.lots %}
+      {% set proposal = row.proposal %}
+      <article class="quick-lot status-{{ proposal.statut.value }}">
+        <div class="candidate-head">
+          <div>
+            <span class="status-pill {{ proposal.statut.value }}">
+              {% if proposal.statut.value == "auto_verifie" %}✓ Auto-vérifié
+              {% elif proposal.statut.value == "a_confirmer" %}⚠ À confirmer
+              {% elif proposal.statut.value == "non_resolu" %}● Non résolu
+              {% elif proposal.statut.value == "contradictoire" %}● Contradictoire
+              {% else %}{{ proposal.statut.value|replace("_", " ") }}{% endif %}
+            </span>
+            <h3>Lot {{ proposal.numero_propose }}</h3>
+          </div>
+          <strong class="area">{% if proposal.surface_proposee_m2 is not none %}{{ "%.2f"|format(proposal.surface_proposee_m2) }} m²{% else %}Surface non résolue{% endif %}</strong>
+        </div>
+        <ul class="quick-zone-list">
+          {% for zone in row.zones %}
+          <li><span>{{ zone.planche.titre if zone.planche else "Planche à confirmer" }} · {{ zone.category|replace("_", " ") }}</span><strong>{% if zone.surface is not none %}{{ "%.2f"|format(zone.surface) }} m²{% else %}unité à confirmer{% endif %}</strong></li>
+          {% else %}
+          <li><span>Aucune zone géométrique rapprochée</span></li>
+          {% endfor %}
+        </ul>
+        <details class="evidence-details">
+          <summary>Pourquoi cette proposition ?</summary>
+          <ul class="evidence-list">
+            {% for proof in row.evidence %}
+            <li class="{{ proof.polarite.value }}">
+              <strong>{{ proof.source|replace("_", " ") }}</strong>
+              <span>{{ proof.description }}</span>
+              {% if proof.valeur is not none %}<small>Valeur : {{ proof.valeur }} · fiabilité {{ proof.fiabilite.value }}</small>{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+        </details>
+      </article>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+      <strong>Le plan est lisible, mais aucun lot suffisamment fiable n’a été identifié.</strong>
+      <span>Les contours restent résumés dans les détails techniques et ne sont pas présentés comme des tâches utilisateur.</span>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="panel compatibility-panel">
+    <p class="eyebrow">Aperçu</p>
+    <h2>Compatibilité avec GeoFlow</h2>
+    <dl>
+      {% for label, value in diagnostic.compatibility %}
+      <div><dt>{{ label }}</dt><dd>{{ value }}</dd></div>
+      {% endfor %}
+    </dl>
+  </section>
+
+  <details class="panel technical-diagnostic">
+    <summary>Détails techniques</summary>
+    <p class="muted">Ces données servent à l’audit. Elles ne représentent pas une liste d’éléments à traiter manuellement.</p>
+    <div class="technical-stats">
+      <div><span>Version</span><strong>{{ diagnostic.technical.version }}</strong></div>
+      <div><span>Unité DXF</span><strong>{{ diagnostic.technical.unit|replace("_", " ") }}</strong></div>
+      <div><span>Entités</span><strong>{{ diagnostic.counts.entities }}</strong></div>
+      <div><span>Calques</span><strong>{{ diagnostic.technical.layers }}</strong></div>
+      <div><span>Textes</span><strong>{{ diagnostic.technical.texts }}</strong></div>
+      <div><span>Contours fermés</span><strong>{{ diagnostic.technical.closed }}</strong></div>
+      <div><span>Bulges</span><strong>{{ diagnostic.technical.bulges }}</strong></div>
+      <div><span>Exclus</span><strong>{{ diagnostic.technical.excluded }}</strong></div>
+    </div>
+    {% if diagnostic.technical.bbox %}<p class="technical-rule">Bounding box : {{ "%.2f"|format(diagnostic.technical.bbox.min_x) }}, {{ "%.2f"|format(diagnostic.technical.bbox.min_y) }} → {{ "%.2f"|format(diagnostic.technical.bbox.max_x) }}, {{ "%.2f"|format(diagnostic.technical.bbox.max_y) }}</p>{% endif %}
+    <details class="entity-types"><summary>Types d’entités</summary><ul>{% for name, count in diagnostic.technical.types.items() %}<li><span>{{ name }}</span><strong>{{ count }}</strong></li>{% endfor %}</ul></details>
+  </details>
+
+  <section class="panel diagnostic-actions">
+    <div>
+      <p class="eyebrow">Suite possible</p>
+      <h2>Passer du diagnostic à la production métier</h2>
+      <p class="muted">Le dossier reprendra le plan, l’inventaire technique, les zones, les propositions, les preuves et les contrôles déjà calculés. Le fichier ne sera ni relu ni reconverti.</p>
+    </div>
+    <div class="action-stack">
+      <form action="/analyses/{{ analysis.id }}/dossier" method="post">
+        <button type="submit">Créer un dossier à partir de cette analyse</button>
+      </form>
+      <form action="/analyses/{{ analysis.id }}/delete" method="post" data-confirm="Supprimer cette analyse temporaire ?">
+        <button type="submit" class="danger-secondary">Supprimer cette analyse</button>
+      </form>
+    </div>
+    <small>Cette analyse temporaire expire le {{ analysis.expires_at.strftime("%d/%m/%Y à %H:%M UTC") }}.</small>
+  </section>
+</main>
+</body>
+</html>

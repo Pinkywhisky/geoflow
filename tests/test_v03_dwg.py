@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 import app.dwg.converter as converter
 import app.main as main
 from app.dwg import DwgConversionError, OdaNotAvailableError, converted_dwg
+from app.quick_analysis import QuickAnalysisRepository
 from app.storage import JsonDossierRepository
 
 from .test_v03_technical import build_technical_dxf
@@ -99,6 +100,11 @@ def web_client(
     monkeypatch.setattr(
         main, "repository", JsonDossierRepository(tmp_path / "web-json")
     )
+    monkeypatch.setattr(
+        main,
+        "analysis_repository",
+        QuickAnalysisRepository(tmp_path / "quick-analyses"),
+    )
     return TestClient(main.app)
 
 
@@ -115,7 +121,9 @@ def test_http_accepts_dwg_and_reuses_dxf_engine(
         "/analyze", files={"file": ("plan.dwg", b"synthetic", "application/acad")}
     )
     assert response.status_code == 200
-    assert "190.00 m²" in response.text
+    assert "Analyse terminée" in response.text
+    assert "plan.dwg" in response.text
+    assert "Contours analysés" in response.text
 
 
 def test_http_reports_missing_oda(

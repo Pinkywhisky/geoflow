@@ -12,3 +12,4 @@ samples/private
 !app/documents/templates/copropriete_draft_v1.docx
 *.pdf
 *.deb*
+secrets/cloudflare_tunnel_token.txt

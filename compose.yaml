@@ -17,7 +17,40 @@ services:
         source: ${ODA_INSTALL_DIR_HOST:-/usr/bin/ODAFileConverter_27.1.0.0}
         target: /usr/bin/ODAFileConverter_27.1.0.0
         read_only: true
+    networks:
+      - geoflow-network
     restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.8.2
+    profiles:
+      - tunnel
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token-file
+      - /run/secrets/cloudflare_tunnel_token
+    depends_on:
+      geoflow:
+        condition: service_healthy
+    secrets:
+      - cloudflare_tunnel_token
+    networks:
+      - geoflow-network
+    restart: unless-stopped
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   geoflow-data:
+
+networks:
+  geoflow-network:
+
+secrets:
+  cloudflare_tunnel_token:
+    file: ./secrets/cloudflare_tunnel_token.txt

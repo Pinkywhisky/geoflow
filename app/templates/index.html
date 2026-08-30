@@ -9,8 +9,8 @@
 </head>
 <body>
 <main class="shell">
-  <header class="brand"><span class="mark">G</span><div><h1>GeoFlow</h1><p>MVP v0.4.1 · Assistant copropriété</p></div></header>
-  {% if message %}<div class="{% if request.query_params.get("deleted") == "1" %}notice{% else %}alert{% endif %}" role="status">{{ message }}</div>{% endif %}
+  <header class="brand"><span class="mark">G</span><div><h1>GeoFlow</h1><p>MVP v0.4.3 · Assistant copropriété</p></div></header>
+  {% if message %}<div class="{% if request.query_params.get("deleted") == "1" or request.query_params.get("analysis_deleted") == "1" %}notice{% else %}alert{% endif %}" role="status">{{ message }}</div>{% endif %}
 
   <section class="panel hero">
     <div>
@@ -60,18 +60,19 @@
   </section>
   {% endif %}
 
-  <details class="panel compact">
-    <summary>Analyse rapide v0.2</summary>
-    <p class="muted">Calcule directement les surfaces des polylignes 2D fermées, sans créer de dossier.</p>
+  <section class="panel quick-analysis-entry">
+    <p class="eyebrow">Pré-diagnostic autonome</p>
+    <h2>Analyse rapide</h2>
+    <p class="muted">Déposez un fichier DWG ou DXF pour obtenir immédiatement ce que GeoFlow comprend du plan, les lots probables et les points à vérifier.</p>
     <form action="/analyze" method="post" enctype="multipart/form-data" class="inline-form">
       <label>Fichier DXF ou DWG
         <input name="file" type="file" accept=".dxf,.dwg" required data-file-input>
         <small data-file-name>Aucun fichier sélectionné</small>
       </label>
-      <button type="submit">Analyser</button>
+      <button type="submit">Obtenir le diagnostic</button>
     </form>
     <p class="hint">Taille maximale : 50 Mo. Un DWG nécessite ODA File Converter.</p>
-  </details>
+  </section>
 </main>
 </body>
 </html>

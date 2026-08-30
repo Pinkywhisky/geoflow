@@ -32,6 +32,20 @@ La Synthèse réutilise les contrôles de complétude du générateur documentai
 
 Depuis l’accueil, l’icône poubelle supprime un dossier après confirmation explicite. La suppression couvre le JSON canonique et ses documents générés, sans pouvoir sortir du répertoire de données du dossier ciblé.
 
+## Analyse rapide
+
+L’Analyse rapide est un pré-diagnostic autonome, distinct du workflow de production. Un DXF ou DWG est inspecté avec les mêmes briques que l’import d’un dossier : conversion éventuelle, inventaire technique, calcul des contours, application du profil de calques et réconciliation explicable. Les layouts explicites sont retenus provisoirement pour le diagnostic et les régions portant une mention de version abandonnée sont écartées provisoirement. Ces décisions restent révisables après création d’un dossier.
+
+L’indice de compréhension repose sur des règles déterministes, sans pourcentage statistique :
+
+- **Bonne** : unité connue, planche exploitable, au moins un lot proposé, majorité des lots auto-vérifiée, aucune contradiction et au plus 20 % des zones métier non rapprochées ;
+- **Partielle** : unité et structure métier détectées, mais confirmations, zones non rapprochées ou contradictions encore présentes ;
+- **Faible** : unité, planches ou rapprochements métier insuffisants pour une lecture fiable.
+
+L’intervention humaine est faible lorsque le diagnostic est bon et sans point restant, importante lorsque la compréhension est faible, que plusieurs contradictions existent ou que la majorité d’au moins trois zones métier reste à traiter, et moyenne dans les autres cas.
+
+Chaque analyse est conservée sous forme de snapshot JSON canonique dans `data/quick-analyses/` pendant 24 heures. Le fichier source et l’éventuel DXF de conversion ne sont pas conservés. La création d’un dossier réutilise directement le snapshot — plan importé, contrôle, zones, propositions, preuves et contrôles globaux — puis supprime l’analyse temporaire, sans deuxième parsing.
+
 Les calculs v0.2 sont conservés : polylignes 2D fermées uniquement, formule du lacet pour les segments droits et intégration analytique exacte des arcs DXF `bulge`. Les `POLYLINE` 3D restent ignorées.
 
 ## Réconciliation explicable v0.4.2
@@ -75,6 +89,12 @@ curl http://localhost:8080/health
 docker compose ps
 docker compose exec geoflow id
 ```
+
+## Accès privé optionnel
+
+GeoFlow peut être exposé par un conteneur Cloudflare Tunnel indépendant, activé uniquement avec le profil `tunnel`. Le fonctionnement local standard ne demande aucun compte ni token Cloudflare.
+
+La création du tunnel, le stockage local du token et la protection du hostname avec Cloudflare Access sont décrits dans [la documentation Cloudflare Tunnel](docs/CLOUDFLARE_TUNNEL.md).
 
 ## Conversion DWG
 

@@ -4,10 +4,23 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main as main
+from app.domain import ControleTechnique, Planche
 from app.dxf import DxfAnalysisError
+from app.quick_analysis import QuickAnalysisRepository
 
 SAMPLE = Path(__file__).parents[1] / "samples" / "exemple_geometre.dxf"
 client = TestClient(main.app)
+
+
+@pytest.fixture(autouse=True)
+def isolated_quick_analyses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        main,
+        "analysis_repository",
+        QuickAnalysisRepository(tmp_path / "quick-analyses"),
+    )
 
 
 def test_health() -> None:
@@ -22,8 +35,9 @@ def test_upload_valid_dxf() -> None:
             "/analyze", files={"file": (SAMPLE.name, upload, "application/dxf")}
         )
     assert response.status_code == 200
-    for expected in ("80.00 m²", "72.00 m²", "38.00 m²", "190.00 m²"):
-        assert expected in response.text
+    assert "Analyse terminée" in response.text
+    assert "Contours analysés" in response.text
+    assert "Créer un dossier à partir de cette analyse" in response.text
 
 
 def test_upload_wrong_extension() -> None:
@@ -60,35 +74,41 @@ def test_temporary_file_removed(
     created_paths: list[Path] = []
 
     def tracked_temporary_file(**kwargs: object):
-        temporary = original_factory(dir=tmp_path, **kwargs)
-        created_paths.append(Path(temporary.name))
+        requested_dir = kwargs.pop("dir", tmp_path)
+        temporary = original_factory(dir=requested_dir, **kwargs)
+        if kwargs.get("suffix") == ".dxf":
+            created_paths.append(Path(temporary.name))
         return temporary
 
     monkeypatch.setattr(main.tempfile, "NamedTemporaryFile", tracked_temporary_file)
     if outcome == "success":
         monkeypatch.setattr(
             main,
-            "analyze_dxf",
-            lambda path: [
-                {"entity_type": "LWPOLYLINE", "layer": "LOT", "closed": True, "area": 1.0}
-            ],
+            "inspect_dxf",
+            lambda path, filename: (
+                ControleTechnique(version_dxf="AC1024", unite_detectee="metre"),
+                [
+                    Planche(
+                        id="model",
+                        titre="Model",
+                        methode_detection="layout_dxf",
+                    )
+                ],
+            ),
         )
     elif outcome == "dxf_error":
-        def raise_dxf_error(path: Path) -> None:
+        def raise_dxf_error(path: Path, filename: str) -> None:
             raise DxfAnalysisError("invalid")
 
-        monkeypatch.setattr(main, "analyze_dxf", raise_dxf_error)
+        monkeypatch.setattr(main, "inspect_dxf", raise_dxf_error)
     else:
-        def raise_unexpected(path: Path) -> None:
+        def raise_unexpected(path: Path, filename: str) -> None:
             raise RuntimeError("unexpected")
 
-        monkeypatch.setattr(main, "analyze_dxf", raise_unexpected)
+        monkeypatch.setattr(main, "inspect_dxf", raise_unexpected)
 
-    if outcome == "unexpected":
-        with pytest.raises(RuntimeError, match="unexpected"):
-            client.post("/analyze", files={"file": ("plan.dxf", b"data")})
-    else:
-        client.post("/analyze", files={"file": ("plan.dxf", b"data")})
+    response = client.post("/analyze", files={"file": ("plan.dxf", b"data")})
+    assert response.status_code == (500 if outcome == "unexpected" else 200 if outcome == "success" else 422)
 
     assert len(created_paths) == 1
     assert not created_paths[0].exists()

@@ -839,3 +839,282 @@ textarea:focus {
     gap: 4px;
   }
 }
+
+.quick-analysis-entry {
+  border-left: 5px solid var(--green);
+}
+
+.diagnostic-hero {
+  border-top: 6px solid #c08b25;
+}
+
+.diagnostic-hero.understanding-bonne {
+  border-top-color: var(--green);
+}
+
+.diagnostic-hero.understanding-faible {
+  border-top-color: #b7402f;
+}
+
+.diagnostic-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 28px;
+}
+
+.diagnostic-conclusion {
+  max-width: 720px;
+  font-size: 1.08rem;
+  font-weight: 700;
+}
+
+.diagnostic-verdict {
+  display: grid;
+  min-width: 190px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: #f0f7f4;
+  text-align: center;
+}
+
+.diagnostic-verdict span {
+  color: var(--muted);
+  font-size: .76rem;
+}
+
+.diagnostic-verdict strong {
+  color: var(--green-dark);
+  font-size: 1.5rem;
+}
+
+.understanding-faible .diagnostic-verdict {
+  background: #ffebe6;
+}
+
+.understanding-faible .diagnostic-verdict strong {
+  color: #852d1f;
+}
+
+.diagnostic-reason {
+  max-width: 850px;
+  color: var(--muted);
+}
+
+.diagnostic-summary-grid,
+.detected-structure,
+.technical-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.diagnostic-summary-grid > div,
+.detected-structure > div,
+.technical-stats > div {
+  display: grid;
+  gap: 4px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+
+.diagnostic-summary-grid span,
+.detected-structure span,
+.technical-stats span {
+  color: var(--muted);
+  font-size: .75rem;
+}
+
+.workload-faible { color: var(--green-dark); }
+.workload-moyenne { color: #71500f; }
+.workload-importante { color: #852d1f; }
+
+.quick-metrics {
+  grid-template-columns: repeat(7, minmax(105px, 1fr));
+}
+
+.detected-structure {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.diagnostic-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.category-summary,
+.compatibility-panel dl {
+  display: grid;
+  gap: 0;
+  margin: 18px 0 0;
+}
+
+.category-summary div,
+.compatibility-panel dl div {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.points-to-check ul,
+.quick-zone-list,
+.entity-types ul {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.points-to-check li {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff5dc;
+  color: #71500f;
+}
+
+.points-to-check li.critical,
+.surface-alert {
+  background: #ffebe6;
+  color: #852d1f;
+}
+
+.points-to-check li.ok {
+  background: #e4f4ed;
+  color: var(--green-dark);
+}
+
+.surface-alert {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+.quick-lot-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.quick-lot {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-left: 5px solid #c08b25;
+  border-radius: 12px;
+}
+
+.quick-lot.status-auto_verifie,
+.quick-lot.status-confirme_manuel {
+  border-left-color: var(--green);
+}
+
+.quick-lot.status-contradictoire {
+  border-left-color: #b7402f;
+  background: #fffaf8;
+}
+
+.quick-lot h3 {
+  margin: 7px 0 0;
+}
+
+.quick-zone-list li,
+.entity-types li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: .86rem;
+}
+
+.technical-diagnostic > summary {
+  font-size: 1.1rem;
+}
+
+.technical-stats {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.entity-types {
+  margin-top: 16px;
+}
+
+.diagnostic-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 20px;
+}
+
+.diagnostic-actions > small {
+  grid-column: 1 / -1;
+}
+
+.action-stack {
+  display: grid;
+  gap: 9px;
+}
+
+.action-stack form,
+.action-stack button {
+  width: 100%;
+}
+
+.danger-secondary {
+  border: 1px solid #d79589;
+  background: #fff;
+  color: #852d1f;
+}
+
+.danger-secondary:hover {
+  background: #ffebe6;
+}
+
+@media (max-width: 900px) {
+  .diagnostic-summary-grid,
+  .technical-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .quick-metrics {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 700px) {
+  .diagnostic-title,
+  .diagnostic-columns,
+  .quick-lot-grid,
+  .diagnostic-actions,
+  .detected-structure {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .diagnostic-verdict {
+    min-width: 0;
+  }
+}
+
+@media (max-width: 520px) {
+  .diagnostic-summary-grid,
+  .quick-metrics,
+  .technical-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .quick-zone-list li,
+  .category-summary div,
+  .compatibility-panel dl div {
+    display: grid;
+  }
+}

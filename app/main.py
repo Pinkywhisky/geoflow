@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -36,7 +37,14 @@ from app.documents import (
 )
 from app.documents.generator import DOCUMENT_MIME
 from app.dwg import DwgConversionError, OdaNotAvailableError, dxf_source
-from app.dxf import DxfAnalysisError, analyze_dxf, inspect_dxf
+from app.dxf import DxfAnalysisError, inspect_dxf
+from app.quick_analysis import (
+    QuickAnalysisNotFoundError,
+    QuickAnalysisRepository,
+    build_quick_diagnostic,
+    prepare_quick_analysis_dossier,
+    promote_quick_analysis,
+)
 from app.reconciliation import reconcile_dossier
 from app.storage import DossierNotFoundError, JsonDossierRepository
 from app.workflow import (
@@ -70,6 +78,7 @@ app = FastAPI(title="GeoFlow", version="0.4.3")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 repository = JsonDossierRepository(DATA_DIR)
+analysis_repository = QuickAnalysisRepository(DATA_DIR / "quick-analyses")
 
 UNIT_OPTIONS = [
     ("metre", "Mètre"),
@@ -560,11 +569,12 @@ def _upload_metadata(file: UploadFile | None) -> tuple[str, str]:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    message = (
-        "Le dossier et ses documents générés ont été supprimés."
-        if request.query_params.get("deleted") == "1"
-        else None
-    )
+    if request.query_params.get("deleted") == "1":
+        message = "Le dossier et ses documents générés ont été supprimés."
+    elif request.query_params.get("analysis_deleted") == "1":
+        message = "L’analyse rapide a été supprimée."
+    else:
+        message = None
     return _index(request, message)
 
 
@@ -1088,28 +1098,78 @@ async def download_document(dossier_id: str, generation_id: str) -> FileResponse
     )
 
 
+def _get_quick_analysis(analysis_id: str):
+    try:
+        return analysis_repository.get(analysis_id)
+    except QuickAnalysisNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Analyse rapide introuvable ou expirée.",
+        ) from exc
+
+
+def _quick_analysis_page(request: Request, analysis_id: str) -> HTMLResponse:
+    snapshot = _get_quick_analysis(analysis_id)
+    return templates.TemplateResponse(
+        request=request,
+        name="results.html",
+        context={
+            "analysis": snapshot,
+            "dossier": snapshot.dossier,
+            "diagnostic": build_quick_diagnostic(snapshot),
+        },
+    )
+
+
+@app.get("/analyses/{analysis_id}", response_class=HTMLResponse)
+async def quick_analysis_result(request: Request, analysis_id: str) -> HTMLResponse:
+    return _quick_analysis_page(request, analysis_id)
+
+
+@app.post("/analyses/{analysis_id}/dossier")
+async def create_dossier_from_analysis(analysis_id: str) -> RedirectResponse:
+    snapshot = _get_quick_analysis(analysis_id)
+    dossier = promote_quick_analysis(snapshot)
+    repository.save(dossier)
+    analysis_repository.delete(analysis_id)
+    return RedirectResponse(f"/dossiers/{dossier.id}/dossier", status_code=303)
+
+
+@app.post("/analyses/{analysis_id}/delete")
+async def delete_quick_analysis(analysis_id: str) -> RedirectResponse:
+    try:
+        analysis_repository.delete(analysis_id)
+    except QuickAnalysisNotFoundError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="Analyse rapide introuvable ou expirée.",
+        ) from exc
+    return RedirectResponse("/?analysis_deleted=1", status_code=303)
+
+
 @app.post("/analyze", response_class=HTMLResponse)
-async def analyze(request: Request, file: UploadFile | None = None) -> HTMLResponse:
-    """Compatibility endpoint for the v0.2 one-shot surface analysis."""
+async def analyze(request: Request, file: UploadFile | None = None) -> Response:
+    """Create a persistent pre-diagnostic with the canonical DXF workflow."""
 
     temporary_path: Path | None = None
+    started_at = time.perf_counter()
     try:
         filename, file_type = _upload_metadata(file)
         assert file is not None
         temporary_path = await _save_temporary_upload(file, f".{file_type}")
         with dxf_source(temporary_path, file_type) as dxf_path:
-            polylines = analyze_dxf(dxf_path)
-        if not polylines:
-            return _index(request, "Aucune polyligne fermée n'a été détectée.", 422)
-        return templates.TemplateResponse(
-            request=request,
-            name="results.html",
-            context={
-                "filename": filename,
-                "polylines": polylines,
-                "total_area": sum(item["area"] for item in polylines),
-            },
+            control, planches = inspect_dxf(dxf_path, filename)
+        dossier = prepare_quick_analysis_dossier(
+            filename,
+            file_type,
+            control,
+            planches,
         )
+        snapshot = analysis_repository.create(
+            dossier,
+            duration_seconds=time.perf_counter() - started_at,
+        )
+        return RedirectResponse(f"/analyses/{snapshot.id}", status_code=303)
     except ValueError as exc:
         return _index(request, str(exc), 400)
     except UploadTooLargeError:
@@ -1126,10 +1186,21 @@ async def analyze(request: Request, file: UploadFile | None = None) -> HTMLRespo
         return _index(request, "Impossible de convertir ce fichier DWG.", 422)
     except DxfAnalysisError:
         logger.exception("DXF analysis failed")
-        return _index(request, "Impossible d’analyser ce fichier DXF.", 422)
+        return _index(
+            request,
+            "Impossible d’analyser ce fichier DXF. Réessayez avec un autre fichier.",
+            422,
+        )
     except OSError:
         logger.exception("Temporary upload handling failed")
         return _index(request, "Impossible de traiter le fichier envoyé.", 500)
+    except Exception:
+        logger.exception("Unexpected quick analysis failure")
+        return _index(
+            request,
+            "Une erreur inattendue empêche cette analyse. Réessayez avec un autre fichier.",
+            500,
+        )
     finally:
         if file is not None:
             await file.close()
