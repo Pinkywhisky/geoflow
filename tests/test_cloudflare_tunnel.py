@@ -45,7 +45,21 @@ def test_cloudflared_uses_a_file_secret_and_is_hardened() -> None:
     ]
     assert tunnel["secrets"] == ["cloudflare_tunnel_token"]
     assert compose["secrets"]["cloudflare_tunnel_token"]["file"] == TOKEN_FILE
-    assert "environment" not in tunnel
+    assert tunnel["environment"] == {"TUNNEL_METRICS": "0.0.0.0:20241"}
+    assert tunnel["healthcheck"] == {
+        "test": [
+            "CMD",
+            "cloudflared",
+            "tunnel",
+            "--metrics",
+            "localhost:20241",
+            "ready",
+        ],
+        "interval": "30s",
+        "timeout": "10s",
+        "retries": 3,
+        "start_period": "20s",
+    }
     assert tunnel["read_only"] is True
     assert tunnel["cap_drop"] == ["ALL"]
     assert tunnel["security_opt"] == ["no-new-privileges:true"]

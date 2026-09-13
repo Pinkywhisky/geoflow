@@ -1,6 +1,8 @@
 services:
   geoflow:
     build: .
+    labels:
+      gginformatik.watchdog: "true"
     environment:
       ODA_FILE_CONVERTER: /usr/bin/ODAFileConverter
       ODA_QT_PLATFORM: xcb
@@ -23,6 +25,8 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:2026.8.2
+    labels:
+      gginformatik.watchdog: "true"
     profiles:
       - tunnel
     environment:
