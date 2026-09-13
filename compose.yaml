@@ -25,6 +25,8 @@ services:
     image: cloudflare/cloudflared:2026.8.2
     profiles:
       - tunnel
+    environment:
+      TUNNEL_METRICS: "0.0.0.0:20241"
     command:
       - tunnel
       - --no-autoupdate
@@ -39,6 +41,12 @@ services:
     networks:
       - geoflow-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "localhost:20241", "ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
     read_only: true
     cap_drop:
       - ALL
