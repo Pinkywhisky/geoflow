@@ -39,7 +39,7 @@ def check_image() -> None:
     assert Path.cwd() == Path("/app"), "Image check must run in the runtime image"
     for module in ("pytest", "httpx", "ruff", "mypy", "playwright", "coverage"):
         assert importlib.util.find_spec(module) is None, f"Development module present: {module}"
-    assert {p.name for p in Path('/app').iterdir()} == {"app", "requirements.txt"}
+    assert {p.name for p in Path('/app').iterdir()} == {"app", "requirements.txt", "LICENSE"}
     for name in (".env", "secrets", ".git", ".aws", ".codex", ".agents"):
         assert not Path("/app", name).exists(), f"Unexpected image artifact: {name}"
     assert not any(Path('/app').rglob('*.dxf'))
