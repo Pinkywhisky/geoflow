@@ -1,11 +1,8 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Document — {{ dossier.reference }} — GeoFlow</title>
-  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
-  <link rel="stylesheet" href="{{ url_for("static", path="/document.css") }}">
+  {% set page_title %}Document — {{ dossier.reference }} — GeoFlow{% endset %}
+  {% include "_head.html" %}
 </head>
 <body>
 <main class="shell wide-shell">
@@ -67,8 +64,8 @@
         <h2>Brouillon Word versionné</h2>
         <p class="muted">Le DOCX, son snapshot JSON et son empreinte SHA-256 seront conservés dans l’historique.</p>
       </div>
-      <form action="/dossiers/{{ dossier.id }}/documents/generate" method="post">
-        <button type="submit" {% if not readiness.can_generate %}disabled aria-disabled="true"{% endif %}>Générer le brouillon Word</button>
+      <form action="/dossiers/{{ dossier.id }}/documents/generate" method="post" data-busy-form>
+        <button type="submit" data-busy-label="Génération en cours…" {% if not readiness.can_generate %}disabled aria-disabled="true"{% endif %}>Générer le brouillon Word</button>
       </form>
     </section>
   {% endif %}
@@ -79,9 +76,12 @@
     <h2>Documents générés</h2>
     <div class="dossier-list">
       {% for item in dossier.generations|reverse %}
-      <a href="/dossiers/{{ dossier.id }}/documents/{{ item.id }}/download">
-        <strong>{{ item.nom_fichier }}</strong>
-        <span>{{ item.statut }} · {{ item.date_generation.strftime("%d/%m/%Y %H:%M") }}</span>
+      <a href="/dossiers/{{ dossier.id }}/documents/{{ item.id }}/download" download>
+        <span class="dossier-main">
+          <strong>{{ item.nom_fichier }}</strong>
+          <small>{{ item.statut }} · {{ item.date_generation.strftime("%d/%m/%Y %H:%M") }}{% if loop.first %} · plus récent{% endif %}</small>
+        </span>
+        <span class="resume-link">Télécharger <span aria-hidden="true">↓</span></span>
       </a>
       {% endfor %}
     </div>

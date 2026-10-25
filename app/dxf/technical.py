@@ -72,6 +72,12 @@ def _slug(value: str) -> str:
     return slug[:60] or "layout"
 
 
+def layout_planche_id(layout_name: str) -> str:
+    """Planche identifier given by the inspection to a DXF layout."""
+
+    return "model" if layout_name.casefold() == "model" else f"layout-{_slug(layout_name)}"
+
+
 def _normalized(value: str) -> str:
     normalized = unicodedata.normalize("NFKD", value)
     return normalized.encode("ascii", "ignore").decode("ascii").upper()
@@ -138,23 +144,49 @@ def _nearby_texts(
     return [content for distance, content in nearby if distance <= radius][:5]
 
 
+def model_subregion(layout_id: str, x: float, y: float, planches: list[Planche]) -> str:
+    """Region of a point drawn in ``layout_id``.
+
+    Layout planches are expressed in paper-space coordinates: their extent
+    says nothing about model-space positions, so only model sub-regions
+    (such as explicit abandoned versions) may refine a model-space entity.
+    The smallest matching sub-region wins, deterministically.
+    """
+
+    if layout_id != "model":
+        return layout_id
+    matching = [
+        planche
+        for planche in planches
+        if planche.id != "model"
+        and planche.methode_detection != "layout_dxf"
+        and planche.bbox_region is not None
+        and planche.bbox_region.min_x <= x <= planche.bbox_region.max_x
+        and planche.bbox_region.min_y <= y <= planche.bbox_region.max_y
+    ]
+    if not matching:
+        return "model"
+    return min(
+        matching,
+        key=lambda item: (
+            (item.bbox_region.max_x - item.bbox_region.min_x)
+            * (item.bbox_region.max_y - item.bbox_region.min_y),
+            item.id,
+        ),
+    ).id
+
+
 def _region_for_candidate(
     layout_id: str, candidate_bbox: BBox | None, planches: list[Planche]
 ) -> str:
-    if layout_id != "model" or candidate_bbox is None:
+    if candidate_bbox is None:
         return layout_id
-    center_x = (candidate_bbox.min_x + candidate_bbox.max_x) / 2
-    center_y = (candidate_bbox.min_y + candidate_bbox.max_y) / 2
-    for planche in planches:
-        region = planche.bbox_region
-        if (
-            planche.id != "model"
-            and region is not None
-            and region.min_x <= center_x <= region.max_x
-            and region.min_y <= center_y <= region.max_y
-        ):
-            return planche.id
-    return "model"
+    return model_subregion(
+        layout_id,
+        (candidate_bbox.min_x + candidate_bbox.max_x) / 2,
+        (candidate_bbox.min_y + candidate_bbox.max_y) / 2,
+        planches,
+    )
 
 
 def inspect_dxf(
@@ -180,7 +212,7 @@ def inspect_dxf(
 
     for layout in document.layouts:
         layout_name = safe_dxf_string(layout.name, 128)
-        layout_id = "model" if layout_name.casefold() == "model" else f"layout-{_slug(layout_name)}"
+        layout_id = layout_planche_id(layout_name)
         entities = list(layout)
         all_layouts.append((layout_id, entities))
         entity_counts.update(entity.dxftype() for entity in entities)
@@ -350,24 +382,24 @@ def inspect_dxf(
 
     warnings: list[str] = [
         (
-            "Les planches sont proposees a partir des layouts et des mentions "
-            "explicites de versions abandonnees. Leurs regions restent a valider."
+            "Les planches sont proposées à partir des layouts et des mentions "
+            "explicites de versions abandonnées. Leurs régions restent à valider."
         )
     ]
     if unit_factor is None:
         warnings.append(
-            "L'unite DXF est absente ou inconnue : une confirmation est obligatoire."
+            "L'unité DXF est absente ou inconnue : une confirmation est obligatoire."
         )
     if ignored_3d:
         warnings.append(
-            f"{ignored_3d} polyligne(s) non 2D ignoree(s), sans calcul de surface."
+            f"{ignored_3d} polyligne(s) non 2D ignorée(s), sans calcul de surface."
         )
     if not candidates:
-        warnings.append("Aucune polyligne 2D fermee calculable n'a ete detectee.")
+        warnings.append("Aucune polyligne 2D fermée calculable n'a été détectée.")
     if any(layer.exclusion_suggeree for layer in layers):
         warnings.append(
-            "Des calques masques, geles, non traces ou nommes Poubelle/00 "
-            "sont signales pour exclusion manuelle."
+            "Des calques masqués, gelés, non tracés ou nommés Poubelle/00 "
+            "sont signalés pour exclusion manuelle."
         )
 
     model_layout = next(

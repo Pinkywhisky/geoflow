@@ -13,6 +13,8 @@ GeoFlow fournit une première tranche verticale du workflow de mise en copropri�
 - qualification des lots et saisie contrôlée des millièmes fournis ;
 - génération d’un premier document Word de travail depuis le dossier canonique validé ;
 - export du dossier canonique en JSON lisible.
+- aperçu SVG des contours détectés, coloré selon l’état des lots, avec un zoom par proposition ;
+- thème clair ou sombre, automatique selon le système ou choisi depuis l’en-tête.
 
 ## Assistant guidé v0.4.3
 
@@ -38,15 +40,80 @@ L’Analyse rapide est un pré-diagnostic autonome, distinct du workflow de prod
 
 L’indice de compréhension repose sur des règles déterministes, sans pourcentage statistique :
 
-- **Bonne** : unité connue, planche exploitable, au moins un lot proposé, majorité des lots auto-vérifiée, aucune contradiction et au plus 20 % des zones métier non rapprochées ;
+- **Bonne** : unité connue, planche exploitable, au moins un lot proposé, majorité des lots auto-vérifiée, aucune contradiction et au plus 20 % des surfaces principales (et autres zones métier hors annexes) non rapprochées ;
 - **Partielle** : unité et structure métier détectées, mais confirmations, zones non rapprochées ou contradictions encore présentes ;
 - **Faible** : unité, planches ou rapprochements métier insuffisants pour une lecture fiable.
 
 L’intervention humaine est faible lorsque le diagnostic est bon et sans point restant, importante lorsque la compréhension est faible, que plusieurs contradictions existent ou que la majorité d’au moins trois zones métier reste à traiter, et moyenne dans les autres cas.
 
+La page de diagnostic se lit de haut en bas : conclusion et niveaux (compréhension, intervention humaine), résumé factuel, points à vérifier classés par gravité (`À corriger`, `À vérifier`, `Information`), lots proposés avec leur explication « Pourquoi ? », structure, surfaces et compatibilité, puis détails techniques repliés. Toutes les phrases sont produites par des règles déterministes à partir du snapshot : aucun pourcentage, aucune estimation de durée, aucun identifiant interne affiché par défaut. Les annexes, que le moteur ne rattache pas automatiquement aux lots, sont signalées séparément des surfaces principales sans lot. L’action principale dépend du niveau — créer le dossier, examiner les points à vérifier ou voir pourquoi — sans jamais bloquer la création.
+
 Chaque analyse est conservée sous forme de snapshot JSON canonique dans `data/quick-analyses/` pendant 24 heures. Le fichier source et l’éventuel DXF de conversion ne sont pas conservés. La création d’un dossier réutilise directement le snapshot — plan importé, contrôle, zones, propositions, preuves et contrôles globaux — puis supprime l’analyse temporaire, sans deuxième parsing.
 
 Les calculs v0.2 sont conservés : polylignes 2D fermées uniquement, formule du lacet pour les segments droits et intégration analytique exacte des arcs DXF `bulge`. Les `POLYLINE` 3D restent ignorées.
+
+## Profils de dessin
+
+Un profil de dessin est un contrat de lecture des plans d’un cabinet : il indique où GeoFlow doit chercher chaque information et quelle source fait autorité. GeoFlow n’impose aucune nomenclature (ni ISO 13567, ni noms de calques) : la charte du client prime sur les conventions suggérées.
+
+Depuis « Profils de dessin », un plan déposé est inspecté une seule fois, comme pour l’analyse rapide. GeoFlow préremplit un assistant en cinq étapes — Dessin, Zones métier, Identification, Versions & priorités, Vérification — dont chaque valeur est un champ directement éditable ; si les propositions sont justes, « Suivant » jusqu’à « Enregistrer le profil » suffit. Chaque proposition est expliquée par des observations du plan (contours, numéros, surfaces) ou par la classification du moteur actuel ; aucune n’est un score.
+
+Les rôles de calques canoniques sont `surface_principale`, `annexe`, `partie_commune`, `hors_copropriete`, `exclusion` et `archive` ; les annotations couvrent le numéro de lot, la surface annotée, le niveau et le titre de planche. Les sources de texte disponibles sont « texte dans la zone » et « texte proche », dans l’ordre de priorité choisi : la première qui donne une valeur fait foi, une source contraire est signalée. Les attributs de bloc ne sont pas encore lus par l’inspection et ne sont donc pas proposés. Une mention de version (par exemple `VERSION * ABANDONNEE`) détecte une version inactive sans jamais délimiter de géométrie.
+
+Les motifs utilisent un mini-format contrôlé : `*` et `?` pour les calques, un unique `{numero}`, `{surface}` ou `{niveau}` pour les textes. Aucune expression régulière, aucun code ni chemin n’est accepté ; longueurs, listes et valeurs numériques sont bornées.
+
+La vérification applique le profil au snapshot technique, sans relire le plan ni lancer la réconciliation, et à chaque modification avec un délai de saisie. Elle classe le profil :
+
+- **Complet** : unité, surfaces principales, numéros et surfaces annotées de tous les lots, niveaux et annexes sont déterminés par des règles, sans contradiction ni mention de version ;
+- **Utilisable avec avertissements** : le profil fonctionne, mais certains éléments restent ambigus (zones sans numéro, écarts de surface, sources contradictoires, annexes sans lot explicite, niveaux manquants, mention de version, calque à plusieurs rôles) ; GeoFlow garde ses règles actuelles pour ces éléments ;
+- **Incomplet** : unité, calque de surface principale ou numéros de lot introuvables.
+
+Un profil est enregistré en JSON atomique dans `data/profiles/`, sous un identifiant stable indépendant de son nom ; il ne contient que des règles, jamais de géométrie, de coordonnées ni d’annotation du plan. « Tester sur un autre plan » applique un profil existant à un nouveau dessin et propose les calques non couverts qui ressemblent à un rôle ; rien n’est ajouté sans clic ni enregistré sans « Enregistrer le profil ».
+
+### Utilisation quotidienne
+
+Un profil se crée occasionnellement puis se réutilise. Le parcours quotidien reste : déposer un plan, vérifier le profil proposé, analyser.
+
+```text
+Dépôt → inspection technique (une seule) → choix du profil → analyse métier → diagnostic → dossier
+```
+
+Après le dépôt, seule l’inspection technique est faite. S’il n’existe aucun profil, l’analyse automatique (legacy) est lancée directement, comme avant. Sinon l’écran « Quel profil utiliser ? » compare chaque profil au plan sur le snapshot technique, sans relire le fichier ni lancer la réconciliation, et affiche un niveau factuel avec ses raisons :
+
+- **Compatible** : unité conforme, surfaces principales et numéros de lot reconnus, aucun avertissement ;
+- **Compatible avec avertissements** : zones sans numéro, surfaces non annotées, sources contradictoires, règle de niveau non applicable, calques de contours non couverts par le profil ;
+- **Peu compatible** : sur ce plan, le profil ne reconnaît ni surface principale ni numéro de lot, ou impose une unité différente de celle déclarée par le fichier. L’analyse n’est lancée qu’après « Continuer avec ce profil ».
+
+Un profil est **recommandé** seulement s’il est clairement préférable : au meilleur niveau atteint, aucun autre n’identifie plus de zones ni ne laisse moins de contours non couverts, et il fait strictement mieux que chacun sur l’un de ces deux faits. Il n’y a pas de score et les égalités ne sont jamais départagées arbitrairement. La présélection suit cet ordre : le profil déjà choisi pour ce plan, puis le profil par défaut (défini dans « Profils de dessin ») s’il n’est pas peu compatible, puis le profil recommandé, sinon rien. Le profil utilisé le plus récemment apparaît en tête sans être présélectionné. « GeoFlow automatique / Legacy » est toujours proposé. « Créer un nouveau profil à partir de ce plan » ouvre l’assistant sur le même snapshot ; après l’enregistrement, « Utiliser ce profil pour analyser le plan » revient au parcours sans nouveau dépôt. La modification d’un profil existant reste une opération d’administration, depuis « Profils de dessin ».
+
+### Application du profil
+
+Le profil choisi est réellement appliqué par la réconciliation (`app/reconciliation/profiled.py`), avec la même lecture que la vérification du profil (`app/profiles/reading.py`) :
+
+- unité du profil (une unité différente de celle du fichier est retenue avec une décision justifiée et signalée) ;
+- source géométrique Model / présentations, présentations exclues, refus des contours auto-intersectés ;
+- rôles des calques : exclusion, archive et hors copropriété écartés ; surfaces principales, annexes et parties communes qualifiées ;
+- numéro de lot et surface annotée lus par les sources du profil, dans leur ordre de priorité, avec leur motif, leur rayon et la tolérance du profil. Une source secondaire contradictoire est signalée, jamais retenue ;
+- niveaux par les correspondances du profil, proposés par défaut lors de la confirmation d’un lot ;
+- annexes : numéro inscrit dans l’annexe si le profil le prévoit, sinon proposition par proximité ou contact ; rien n’est rattaché sans l’utilisateur.
+
+Un lot lu selon le profil, sans contradiction et dont la surface annotée est cohérente, est auto-vérifié. Un écart hors tolérance reste à confirmer, même si le profil désigne la source qui fait foi.
+
+**Mode hybride.** Ce que le profil ne décide pas revient explicitement au moteur automatique : calques sans rôle dans le profil, et lots qu’aucune règle du profil ne numérote, à condition de n’utiliser aucun contour que le profil a classé autrement. Une règle du profil n’est jamais remplacée par une heuristique contraire. Chaque preuve, proposition et zone porte son origine (`profil` ou `legacy`) ; le diagnostic indique par exemple « 4 lots identifiés par le profil · 1 complété par l’analyse automatique ». Les décisions humaines (planche ou calque exclus, lots confirmés, annexes rattachées) priment sur les deux.
+
+### Révisions et reproductibilité
+
+`schema_version` (2) décrit le format du fichier ; les profils au format 1 sont lus comme révision 1. `revision` compte les modifications des règles : elle augmente à chaque enregistrement qui change le hash SHA-256 des règles (`content_hash`). Un renommage seul est une métadonnée et ne crée pas de révision ; une duplication repart à la révision 1.
+
+L’analyse conserve dans le dossier (`profile_usage`) le mode choisi, l’identifiant, le nom, la révision, le hash et une copie exacte des règles, jamais de données du plan. Toute réconciliation ultérieure du dossier (unité, planche, calque, confirmation, annexe, réimport d’un plan) utilise ce snapshot et jamais le profil stocké. Une révision plus récente, un renommage ou une suppression du profil sont seulement signalés dans l’étape Dossier ; ils ne changent ni les résultats ni l’historique. Les dossiers antérieurs, sans `profile_usage`, restent lus comme « Analyse automatique / Legacy » ; les champs ajoutés ne sont pas écrits tant qu’ils sont vides, si bien que leur JSON et leur empreinte de validation sont inchangés.
+
+La ré-analyse d’un dossier existant avec un autre profil ou une révision plus récente n’est pas proposée. Elle pourrait renuméroter ou regrouper autrement les propositions, alors que les confirmations humaines, les annexes rattachées, la validation et les DOCX y sont liés. Elle demandera un aperçu des différences avant d’être sûre. Avant la création du dossier, le profil d’une analyse rapide peut en revanche être changé librement, puisqu’aucune décision humaine n’y est encore attachée.
+
+## Référence du dossier
+
+Chaque dossier possède un identifiant technique immuable (`id`), qui sert de clé de stockage, d’URL et de répertoire des documents générés, et une référence métier modifiable (`reference`). Lors d’une création depuis l’analyse rapide, le nom du fichier sans extension est proposé par défaut ; il peut être remplacé avant la création, puis à tout moment dans l’étape Dossier.
+
+La référence est conservée telle que saisie : seuls les caractères de contrôle et les espaces superflus sont retirés. Elle est unique, sans distinction de casse ni d’espacement, afin que la liste de reprise ne présente jamais deux dossiers indiscernables ; une collision est refusée avec un message explicite, sans suffixe ajouté automatiquement. La référence figurant dans le brouillon Word, son changement replace le dossier à l’état `À valider` ; les DOCX déjà générés conservent leur nom et restent téléchargeables.
 
 ## Réconciliation explicable v0.4.2
 
@@ -61,6 +128,23 @@ Le profil de calques `geometre-npg-v1` distingue notamment les contours principa
 Le moteur normalise les textes positionnés, les rattache à une planche et utilise un index spatial en grille. Une proposition conserve chaque preuve avec sa source, sa valeur, sa fiabilité, sa polarité, sa description et sa provenance. Une décision manuelle n’efface jamais le résultat automatique qui l’a précédée.
 
 L’auto-vérification est volontairement stricte : elle exige un repère de lot, une annotation de surface cohérente avec la géométrie dans les tolérances absolue et relative, une planche retenue, un titre de plan suffisamment spécifique et plusieurs contours métier. Un texte, un nom de calque ou une surface isolée ne suffisent jamais. Les contradictions, doublons, propositions incomplètes et zones non rapprochées sont exposés dans les contrôles globaux et bloquent la validation documentaire lorsqu’ils sont critiques.
+
+### Espaces DXF et représentations multiples
+
+Les présentations (layouts) sont exprimées en coordonnées papier : leur emprise ne sert jamais à classer un contour ou un texte de l’espace objet. Seules les sous-régions de l’espace objet, comme les mentions explicites de version abandonnée, affinent la région d’une entité de Model ; une même règle s’applique aux contours et aux textes. Les dossiers importés avant cette correction conservent leurs régions d’origine : réimporter le plan les recalcule.
+
+Une proposition regroupe les occurrences d’un même numéro de lot, ce qui permet un lot sur plusieurs niveaux. Deux règles conservatrices évitent de compter deux fois le même objet :
+
+- une occurrence copie exacte d’une occurrence retenue sur une autre planche — mêmes contours, sommets et arcs après une translation unique, même surface annotée — est une représentation dupliquée ;
+- lorsqu’au moins une occurrence porte sa propre surface annotée, les occurrences sans annotation (versions antérieures, brouillons) ne sont pas additionnées.
+
+Une représentation écartée reste rattachée à la proposition avec une preuve négative ; elle est proposée décochée lors de la confirmation du lot, pour le cas d’un autre niveau. Un lot concerné ne peut pas être auto-vérifié. Deux copies sur la même planche ne sont jamais fusionnées : elles peuvent représenter deux niveaux. Une surface identique, un numéro commun ou la proximité ne suffisent jamais à fusionner.
+
+### Annexes
+
+Les annexes (calque 81) sont des zones métier distinctes. Elles ne dégradent pas la compréhension du plan, mais restent comptées dans l’intervention humaine tant qu’elles ne sont pas rattachées. GeoFlow propose un lot pour une annexe uniquement si un seul numéro de lot retenu est à proximité sur la même planche, ou si, parmi plusieurs, l’annexe touche les contours d’un seul lot et reste nettement séparée des autres ; sinon l’annexe reste ambiguë ou sans proposition. Une proposition n’est jamais appliquée sans action de l’utilisateur.
+
+Dans l’étape Lots & surfaces, chaque annexe se rattache à un lot constitué avec sauvegarde automatique ; un rattachement crée une zone `secondaire_annexe` du lot, avec sa surface et sa provenance, sans fusion avec la surface principale. Le niveau reste « À préciser » tant qu’il n’est pas saisi. Rattacher, déplacer ou détacher une annexe invalide la validation du dossier et ne relit jamais le plan. Les écritures d’un même dossier sont sérialisées.
 
 ## Données métier et avertissements v0.4.3
 

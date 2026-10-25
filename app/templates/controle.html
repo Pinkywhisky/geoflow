@@ -1,11 +1,8 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Contrôle — {{ dossier.reference }} — GeoFlow</title>
-  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
-  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+  {% set page_title %}Contrôle — {{ dossier.reference }} — GeoFlow{% endset %}
+  {% include "_head.html" %}
 </head>
 <body>
 <main class="shell wide-shell">
@@ -24,7 +21,7 @@
     </div>
     <div class="metrics">
       <div><span>Version</span><strong>{{ control.version_dxf }}</strong></div>
-      <div><span>Unité détectée</span><strong>{{ control.unite_detectee }}</strong></div>
+      <div><span>Unité détectée</span><strong>{{ control.unite_detectee|unit_label }}</strong></div>
       <div><span>Calques</span><strong>{{ control.calques|length }}</strong></div>
       <div><span>Entités</span><strong>{{ control.nombre_entites }}</strong></div>
       <div><span>Polylignes calculables</span><strong>{{ control.polylignes_fermees }}</strong></div>
@@ -83,6 +80,13 @@
     <p class="eyebrow">Planches et représentations</p>
     <h2>Choisir les versions à retenir</h2>
     <p class="muted">Chaque changement est enregistré immédiatement, sans validation ligne par ligne.</p>
+    {% set retained_planches = dossier.planches|selectattr("statut.value", "equalto", "retenue")|list %}
+    {% if not retained_planches %}
+    <div class="warning action-hint" data-planche-hint>
+      <span aria-hidden="true">⚠</span>
+      <span>Marquez au moins une planche comme <strong>Retenue</strong> : sans cela, la validation du dossier restera bloquée.</span>
+    </div>
+    {% endif %}
     <div class="review-list">
       {% for planche in dossier.planches %}
       <form action="/dossiers/{{ dossier.id }}/planches/{{ planche.id }}" method="post" data-autosave>
@@ -104,7 +108,7 @@
   </section>
 
   <details class="panel">
-    <summary>Inventaire des calques <span class="badge">{{ control.calques|length }}</span></summary>
+    <summary>Inventaire des calques <span class="badge">{{ control.calques|length }}</span>{% set flagged = control.calques|selectattr("exclusion_suggeree")|list %}{% if flagged %} <span class="badge warning">{{ flagged|length }} signalé(s)</span>{% endif %}</summary>
     <p class="muted">Les calques sensibles sont signalés, mais jamais exclus automatiquement.</p>
     <label class="filter" for="layer-search">Rechercher un calque
       <input id="layer-search" type="search" placeholder="Nom du calque…" data-layer-filter>

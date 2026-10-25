@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import os
 import tempfile
+import threading
 import time
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -23,6 +27,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.domain import (
     Dossier,
+    GlobalCheckStatus,
     StatutValidationDonnees,
     StatutValidationMillieme,
     VerificationStatus,
@@ -38,23 +43,42 @@ from app.documents import (
 from app.documents.generator import DOCUMENT_MIME
 from app.dwg import DwgConversionError, OdaNotAvailableError, dxf_source
 from app.dxf import DxfAnalysisError, inspect_dxf
+from app.dxf.technical import meters_per_unit
 from app.quick_analysis import (
+    QuickAnalysisSnapshot,
     QuickAnalysisNotFoundError,
     QuickAnalysisRepository,
     build_quick_diagnostic,
+    is_pending,
     prepare_quick_analysis_dossier,
     promote_quick_analysis,
 )
+from app.annex_view import build_annex_rows
+from app.profiles.compatibility import LEVELS as COMPATIBILITY_LEVELS
+from app.profiles.compatibility import CompatibilityCache, recommend
+from app.profiles.evaluation import STATUS_LABELS, evaluate_profile
+from app.profiles.forms import ProfileFormError, profile_from_form
+from app.profiles.inference import infer_profile, legacy_view, unmapped_layer_suggestions
+from app.profiles.models import LAYER_ROLES, TEXT_SOURCES, DrawingProfile, ProfileCheck
+from app.profiles.storage import ProfileNotFoundError, ProfileRepository
+from app.profiles.usage import usage_from_profile, usage_summary
+from app.labels import UNIT_OPTIONS, humanize, unit_label, verification_label
+from app.plan_preview import build_class_preview, build_plan_overview, build_proposal_preview
 from app.reconciliation import reconcile_dossier
 from app.storage import DossierNotFoundError, JsonDossierRepository
 from app.workflow import (
     add_parcel,
+    apply_profile_choice,
     associate_candidate,
+    attach_annex,
     attach_import,
+    attach_proposed_annexes,
+    clean_reference,
     confirm_lot_proposal,
     confirm_unit,
     create_dossier,
     has_current_data_validation,
+    rename_dossier,
     record_data_validation,
     mark_lot_proposal_for_review,
     remove_parcel,
@@ -77,16 +101,20 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="GeoFlow", version="0.4.3")
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
+
+
+def _static_version() -> str:
+    """Content hash appended to asset URLs so browsers and proxies refetch them."""
+    digest = hashlib.sha256()
+    for path in sorted((BASE_DIR / "static").glob("*.*")):
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:10]
+
+
+templates.env.globals["static_version"] = _static_version()
 repository = JsonDossierRepository(DATA_DIR)
 analysis_repository = QuickAnalysisRepository(DATA_DIR / "quick-analyses")
 
-UNIT_OPTIONS = [
-    ("metre", "Mètre"),
-    ("millimetre", "Millimètre"),
-    ("centimetre", "Centimètre"),
-    ("pied", "Pied"),
-    ("pouce", "Pouce"),
-]
 CATEGORIES = [
     ("principale", "Principale"),
     ("secondaire_annexe", "Secondaire / annexe"),
@@ -108,6 +136,21 @@ MILLIEME_STATUS_OPTIONS = (
     (StatutValidationMillieme.VALIDE.value, "Validé"),
 )
 PAGE_SIZE = 25
+CHECK_LABELS = {
+    "numeros_lots_uniques": "Numéros de lots uniques",
+    "zones_non_reutilisees": "Contours non réutilisés",
+    "propositions_completes": "Propositions complètes",
+    "reconciliation_resolue": "Rapprochements résolus",
+    "lots_constitues": "Lots constitués",
+    "zones_retenues_affectees": "Zones retenues affectées",
+}
+
+
+templates.env.filters["unit_label"] = unit_label
+templates.env.filters["verification_label"] = verification_label
+templates.env.filters["check_label"] = lambda code: CHECK_LABELS.get(
+    code, humanize(code)
+)
 
 
 class UploadTooLargeError(RuntimeError):
@@ -115,13 +158,100 @@ class UploadTooLargeError(RuntimeError):
 
 
 def _index(
-    request: Request, message: str | None = None, status_code: int = 200
+    request: Request,
+    message: str | None = None,
+    status_code: int = 200,
+    blank_form_error: bool = False,
 ) -> HTMLResponse:
+    dossiers = repository.list()
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"message": message, "dossiers": repository.list()},
+        context={
+            "message": message,
+            "dossiers": dossiers,
+            "progress": {item.id: _dossier_progress(item) for item in dossiers},
+            "blank_form_error": blank_form_error,
+        },
         status_code=status_code,
+    )
+
+
+def _relative_time(moment: datetime | None) -> str:
+    if moment is None:
+        return ""
+    seconds = (datetime.now(timezone.utc) - moment).total_seconds()
+    if seconds < 60:
+        return "à l’instant"
+    if seconds < 3600:
+        return f"il y a {int(seconds // 60)} min"
+    if seconds < 86400:
+        return f"il y a {int(seconds // 3600)} h"
+    if seconds < 2 * 86400:
+        return "hier"
+    return f"le {moment.astimezone().strftime('%d/%m/%Y')}"
+
+
+def _dossier_progress(dossier: Dossier) -> dict[str, object]:
+    """Where a dossier stands, and the step to resume it from."""
+    steps = _workflow_steps(dossier, "")
+    accessible = [step for step in steps if step["href"]]
+    remaining = [step for step in accessible if not step["completed"]]
+    target = remaining[0] if remaining else accessible[-1]
+    return {
+        "href": target["href"],
+        "step_id": target["id"],
+        "step_label": str(target["label"]).split(". ", 1)[-1],
+        "step_number": steps.index(target) + 1,
+        "step_count": len(steps),
+        "steps": [
+            {
+                "state": "done"
+                if step["completed"]
+                else "current"
+                if step is target
+                else "todo",
+                "label": str(step["label"]).split(". ", 1)[-1],
+            }
+            for step in steps
+        ],
+        "pending": sum(int(step["pending"]) for step in steps),
+        "modified": _relative_time(repository.modified_at(dossier.id)),
+    }
+
+
+def _blocker_link(dossier: Dossier, message: str) -> tuple[str, str] | None:
+    """Point a readiness blocker to the step where the user can resolve it."""
+    lowered = message.casefold()
+    if "unité" in lowered or "planche" in lowered:
+        return f"/dossiers/{dossier.id}/controle", "Corriger dans Contrôle"
+    if any(word in lowered for word in ("surface", "zone", "lot", "réconciliation")):
+        return f"/dossiers/{dossier.id}/lots", "Corriger dans Lots & surfaces"
+    return None
+
+
+PENDING_PROPOSAL_STATUSES = {
+    VerificationStatus.A_CONFIRMER,
+    VerificationStatus.NON_RESOLU,
+    VerificationStatus.CONTRADICTOIRE,
+    VerificationStatus.A_REVOIR,
+}
+
+
+def _lots_pending_count(dossier: Dossier) -> int:
+    """Proposals and blocking global checks still requiring a human decision."""
+    reconciliation = dossier.reconciliation
+    if reconciliation is None:
+        return 0
+    pending = sum(
+        item.statut in PENDING_PROPOSAL_STATUSES
+        for item in reconciliation.lot_proposals
+    )
+    if pending:
+        return pending
+    return sum(
+        check.statut == GlobalCheckStatus.BLOQUANT
+        for check in reconciliation.controles_globaux
     )
 
 
@@ -129,6 +259,7 @@ def _workflow_steps(dossier: Dossier, active: str) -> list[dict[str, object]]:
     plan_ready = dossier.plan_importe is not None
     control_ready = plan_ready and bool(dossier.plan_importe.unite_confirmee)
     validated = has_current_data_validation(dossier)
+    lots_pending = _lots_pending_count(dossier) if control_ready else 0
     definitions = [
         ("dossier", "1. Dossier", f"/dossiers/{dossier.id}/dossier", True),
         ("plan", "2. Plan", f"/dossiers/{dossier.id}/plan", True),
@@ -141,7 +272,7 @@ def _workflow_steps(dossier: Dossier, active: str) -> list[dict[str, object]]:
         "dossier": True,
         "plan": plan_ready,
         "controle": control_ready,
-        "lots": bool(dossier.zones),
+        "lots": bool(dossier.zones) and not lots_pending,
         "synthese": validated,
         "document": bool(dossier.generations),
     }
@@ -152,6 +283,7 @@ def _workflow_steps(dossier: Dossier, active: str) -> list[dict[str, object]]:
             "href": href if accessible else None,
             "active": step_id == active,
             "completed": completed[step_id],
+            "pending": lots_pending if step_id == "lots" else 0,
             "locked": not accessible,
         }
         for step_id, label, href, accessible in definitions
@@ -194,7 +326,13 @@ def _dossier_page(
     status_code: int = 200,
 ) -> HTMLResponse:
     return _workflow_page(
-        request, "dossier.html", dossier, "dossier", message, status_code
+        request,
+        "dossier.html",
+        dossier,
+        "dossier",
+        message,
+        status_code,
+        profile_usage=_usage_summary(dossier),
     )
 
 
@@ -256,6 +394,7 @@ def _saved_response(
                 "status": "ok",
                 "message": "Enregistré",
                 "validation_status": dossier.statut_validation_donnees.value,
+                "reference": dossier.reference,
             }
         )
     return RedirectResponse(redirect_to, status_code=303)
@@ -279,6 +418,14 @@ def _mutation_error(
     }
     renderer = renderers[page]
     return renderer(request, dossier, message, 400)
+
+
+def _ensure_reference_available(reference: str, exclude_id: str | None = None) -> None:
+    existing = repository.find_by_reference(reference, exclude_id)
+    if existing is not None:
+        raise ValueError(
+            f"La référence « {existing.reference} » est déjà utilisée par un autre dossier."
+        )
 
 
 def _get_dossier(dossier_id: str):
@@ -368,12 +515,6 @@ def _lots_page(
         filtered_count = len(filtered_candidates)
     else:
         filtered_proposals = []
-        review_statuses = {
-            VerificationStatus.A_CONFIRMER,
-            VerificationStatus.NON_RESOLU,
-            VerificationStatus.CONTRADICTOIRE,
-            VerificationStatus.A_REVOIR,
-        }
         for proposal in reconciliation.lot_proposals:
             haystack = " ".join(
                 [
@@ -384,7 +525,7 @@ def _lots_page(
             ).casefold()
             if query and query.casefold() not in haystack:
                 continue
-            if proposal_status == "review" and proposal.statut not in review_statuses:
+            if proposal_status == "review" and proposal.statut not in PENDING_PROPOSAL_STATUSES:
                 continue
             if proposal_status not in {"", "all", "review"} and (
                 proposal.statut.value != proposal_status
@@ -442,6 +583,24 @@ def _lots_page(
                     for candidate_id in proposal.candidate_zone_ids
                     if candidate_id in candidate_by_id
                 ],
+                "set_aside": [
+                    candidate_by_id[candidate_id]
+                    for candidate_id in proposal.candidate_zone_ids_ecartes
+                    if candidate_id in candidate_by_id
+                ],
+                "preview": build_proposal_preview(
+                    control.zones_candidates, reconciliation, proposal
+                ),
+                # Level read by the drawing profile, offered as the default.
+                "level": next(
+                    (
+                        str(evidence_by_id[evidence_id].valeur)
+                        for evidence_id in proposal.evidence_ids
+                        if evidence_id in evidence_by_id
+                        and evidence_by_id[evidence_id].source == "niveau_profil"
+                    ),
+                    "",
+                ),
             }
             for proposal in page_proposals
         ]
@@ -504,6 +663,20 @@ def _lots_page(
         millieme_status_options=MILLIEME_STATUS_OPTIONS,
         milliemes_by_lot=milliemes_by_lot,
         millieme_total=sum(item.valeur for item in dossier.milliemes),
+        annexes=None if technical_mode else build_annex_rows(dossier),
+        plan_overview=(
+            []
+            if technical_mode
+            else build_plan_overview(
+                control.zones_candidates,
+                reconciliation,
+                lambda proposal: (
+                    f"/dossiers/{dossier.id}/lots?"
+                    + urlencode({"proposal_status": "all", "q": proposal.numero_propose})
+                    + f"#proposal-{proposal.id}"
+                ),
+            )
+        ),
     )
 
 
@@ -522,6 +695,9 @@ def _summary_page(
         message,
         status_code,
         readiness=readiness,
+        blocker_rows=[
+            (item, _blocker_link(dossier, item)) for item in readiness.blockers
+        ],
         validation_current=has_current_data_validation(dossier),
     )
 
@@ -591,8 +767,9 @@ async def new_dossier(
 ) -> Response:
     try:
         dossier = create_dossier(reference, dossier_type)
+        _ensure_reference_available(dossier.reference)
     except ValueError as exc:
-        return _index(request, str(exc), 400)
+        return _index(request, str(exc), 400, blank_form_error=True)
     repository.save(dossier)
     return RedirectResponse(f"/dossiers/{dossier.id}/plan", status_code=303)
 
@@ -615,6 +792,22 @@ async def delete_dossier(dossier_id: str) -> RedirectResponse:
 @app.get("/dossiers/{dossier_id}/dossier", response_class=HTMLResponse)
 async def dossier_page(request: Request, dossier_id: str) -> HTMLResponse:
     return _dossier_page(request, _get_dossier(dossier_id))
+
+
+@app.post("/dossiers/{dossier_id}/reference")
+async def save_dossier_reference(
+    request: Request,
+    dossier_id: str,
+    reference: str = Form(""),
+) -> Response:
+    dossier = _get_dossier(dossier_id)
+    try:
+        cleaned = clean_reference(reference)
+        _ensure_reference_available(cleaned, exclude_id=dossier.id)
+        rename_dossier(dossier, cleaned)
+    except ValueError as exc:
+        return _mutation_error(request, dossier, str(exc), "dossier")
+    return _saved_response(request, dossier, f"/dossiers/{dossier.id}/dossier")
 
 
 @app.post("/dossiers/{dossier_id}/dossier/details")
@@ -944,6 +1137,35 @@ async def confirm_reconciled_lot(
     )
 
 
+@app.post("/dossiers/{dossier_id}/annexes/confirm-proposals")
+async def confirm_annex_proposals(request: Request, dossier_id: str) -> Response:
+    with repository.lock(dossier_id):
+        dossier = _get_dossier(dossier_id)
+        try:
+            attach_proposed_annexes(dossier)
+        except ValueError as exc:
+            return _mutation_error(request, dossier, str(exc), "lots")
+        return _saved_response(request, dossier, f"/dossiers/{dossier.id}/lots#annexes")
+
+
+@app.post("/dossiers/{dossier_id}/annexes/{candidate_id}")
+async def save_annex_attachment(
+    request: Request,
+    dossier_id: str,
+    candidate_id: str,
+    lot_id: str = Form(""),
+    level_code: str = Form(""),
+) -> Response:
+    # Many annexes are saved in quick succession: keep each cycle atomic.
+    with repository.lock(dossier_id):
+        dossier = _get_dossier(dossier_id)
+        try:
+            attach_annex(dossier, candidate_id, lot_id.strip() or None, level_code)
+        except ValueError as exc:
+            return _mutation_error(request, dossier, str(exc), "lots")
+        return _saved_response(request, dossier, f"/dossiers/{dossier.id}/lots#annexes")
+
+
 @app.post("/dossiers/{dossier_id}/lots/{lot_id}/metadata")
 async def save_lot_metadata(
     request: Request,
@@ -1108,7 +1330,13 @@ def _get_quick_analysis(analysis_id: str):
         ) from exc
 
 
-def _quick_analysis_page(request: Request, analysis_id: str) -> HTMLResponse:
+def _quick_analysis_page(
+    request: Request,
+    analysis_id: str,
+    reference_error: str | None = None,
+    reference_value: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
     snapshot = _get_quick_analysis(analysis_id)
     return templates.TemplateResponse(
         request=request,
@@ -1117,21 +1345,49 @@ def _quick_analysis_page(request: Request, analysis_id: str) -> HTMLResponse:
             "analysis": snapshot,
             "dossier": snapshot.dossier,
             "diagnostic": build_quick_diagnostic(snapshot),
+            "profile_usage": _usage_summary(snapshot.dossier),
+            "has_profiles": bool(profile_repository.list()[0]),
+            "reference_error": reference_error,
+            "reference_value": (
+                snapshot.dossier.reference if reference_value is None else reference_value
+            ),
         },
+        status_code=status_code,
     )
 
 
 @app.get("/analyses/{analysis_id}", response_class=HTMLResponse)
-async def quick_analysis_result(request: Request, analysis_id: str) -> HTMLResponse:
+async def quick_analysis_result(request: Request, analysis_id: str) -> Response:
+    if is_pending(_get_quick_analysis(analysis_id)):
+        return RedirectResponse(f"/analyses/{analysis_id}/profil", status_code=303)
     return _quick_analysis_page(request, analysis_id)
 
 
 @app.post("/analyses/{analysis_id}/dossier")
-async def create_dossier_from_analysis(analysis_id: str) -> RedirectResponse:
+async def create_dossier_from_analysis(
+    request: Request,
+    analysis_id: str,
+    reference: str | None = Form(None),
+) -> Response:
     snapshot = _get_quick_analysis(analysis_id)
-    dossier = promote_quick_analysis(snapshot)
+    if is_pending(snapshot):
+        return RedirectResponse(f"/analyses/{analysis_id}/profil", status_code=303)
+    try:
+        dossier = promote_quick_analysis(snapshot, reference)
+        _ensure_reference_available(dossier.reference)
+    except ValueError as exc:
+        return _quick_analysis_page(
+            request,
+            analysis_id,
+            reference_error=str(exc),
+            reference_value=reference or "",
+            status_code=409 if "déjà utilisée" in str(exc) else 400,
+        )
     repository.save(dossier)
     analysis_repository.delete(analysis_id)
+    usage = dossier.profile_usage
+    if usage is not None and usage.mode == "profil":
+        profile_repository.mark_used(usage.profile_id)
     return RedirectResponse(f"/dossiers/{dossier.id}/dossier", status_code=303)
 
 
@@ -1147,9 +1403,8 @@ async def delete_quick_analysis(analysis_id: str) -> RedirectResponse:
     return RedirectResponse("/?analysis_deleted=1", status_code=303)
 
 
-@app.post("/analyze", response_class=HTMLResponse)
-async def analyze(request: Request, file: UploadFile | None = None) -> Response:
-    """Create a persistent pre-diagnostic with the canonical DXF workflow."""
+async def _create_analysis(file: UploadFile | None) -> QuickAnalysisSnapshot:
+    """Inspect an uploaded plan once and keep it as a temporary snapshot."""
 
     temporary_path: Path | None = None
     started_at = time.perf_counter()
@@ -1159,49 +1414,477 @@ async def analyze(request: Request, file: UploadFile | None = None) -> Response:
         temporary_path = await _save_temporary_upload(file, f".{file_type}")
         with dxf_source(temporary_path, file_type) as dxf_path:
             control, planches = inspect_dxf(dxf_path, filename)
-        dossier = prepare_quick_analysis_dossier(
-            filename,
-            file_type,
-            control,
-            planches,
-        )
-        snapshot = analysis_repository.create(
-            dossier,
-            duration_seconds=time.perf_counter() - started_at,
-        )
-        return RedirectResponse(f"/analyses/{snapshot.id}", status_code=303)
-    except ValueError as exc:
-        return _index(request, str(exc), 400)
-    except UploadTooLargeError:
-        return _index(request, "Le fichier dépasse la taille maximale de 50 Mo.", 413)
-    except OdaNotAvailableError:
-        logger.exception("DWG analysis requested without ODA File Converter")
-        return _index(
-            request,
-            "Conversion DWG indisponible : ODA File Converter n'est pas installé.",
-            503,
-        )
-    except DwgConversionError:
-        logger.exception("DWG conversion failed")
-        return _index(request, "Impossible de convertir ce fichier DWG.", 422)
-    except DxfAnalysisError:
-        logger.exception("DXF analysis failed")
-        return _index(
-            request,
-            "Impossible d’analyser ce fichier DXF. Réessayez avec un autre fichier.",
-            422,
-        )
-    except OSError:
-        logger.exception("Temporary upload handling failed")
-        return _index(request, "Impossible de traiter le fichier envoyé.", 500)
-    except Exception:
-        logger.exception("Unexpected quick analysis failure")
-        return _index(
-            request,
-            "Une erreur inattendue empêche cette analyse. Réessayez avec un autre fichier.",
-            500,
+        dossier = prepare_quick_analysis_dossier(filename, file_type, control, planches)
+        return analysis_repository.create(
+            dossier, duration_seconds=time.perf_counter() - started_at
         )
     finally:
         if file is not None:
             await file.close()
         _remove_temporary_file(temporary_path)
+
+
+def _analysis_failure(exc: Exception) -> tuple[str, int]:
+    """User message and status for a failed upload; call inside ``except``."""
+
+    if isinstance(exc, ValueError):
+        return str(exc), 400
+    if isinstance(exc, UploadTooLargeError):
+        return "Le fichier dépasse la taille maximale de 50 Mo.", 413
+    if isinstance(exc, OdaNotAvailableError):
+        logger.exception("DWG analysis requested without ODA File Converter")
+        return "Conversion DWG indisponible : ODA File Converter n'est pas installé.", 503
+    if isinstance(exc, DwgConversionError):
+        logger.exception("DWG conversion failed")
+        return "Impossible de convertir ce fichier DWG.", 422
+    if isinstance(exc, DxfAnalysisError):
+        logger.exception("DXF analysis failed")
+        return "Impossible d’analyser ce fichier DXF. Réessayez avec un autre fichier.", 422
+    if isinstance(exc, OSError):
+        logger.exception("Temporary upload handling failed")
+        return "Impossible de traiter le fichier envoyé.", 500
+    logger.exception("Unexpected quick analysis failure")
+    return "Une erreur inattendue empêche cette analyse. Réessayez avec un autre fichier.", 500
+
+
+@app.post("/analyze", response_class=HTMLResponse)
+async def analyze(request: Request, file: UploadFile | None = None) -> Response:
+    """Create a persistent pre-diagnostic with the canonical DXF workflow."""
+
+    try:
+        snapshot = await _create_analysis(file)
+    except Exception as exc:
+        message, status = _analysis_failure(exc)
+        return _index(request, message, status)
+    if profile_repository.list()[0]:
+        return RedirectResponse(f"/analyses/{snapshot.id}/profil", status_code=303)
+    # Without any profile the choice would be empty: analyse automatically.
+    apply_profile_choice(snapshot.dossier, None)
+    analysis_repository.update(snapshot)
+    return RedirectResponse(f"/analyses/{snapshot.id}", status_code=303)
+
+
+# Drawing profiles ---------------------------------------------------------
+
+profile_repository = ProfileRepository(DATA_DIR / "profiles")
+profile_repository_lock = threading.Lock()
+ROLE_PREVIEW_CLASSES = {
+    "surface_principale": "is-ok",
+    "annexe": "is-review",
+    "partie_commune": "is-context",
+    "hors_copropriete": "is-conflict",
+    "exclusion": "is-excluded",
+    "archive": "is-excluded",
+}
+
+
+compatibility_cache = CompatibilityCache()
+
+
+def _file_declares_unit(dossier: Dossier) -> bool:
+    """Whether the file itself declares a usable unit (a profile may have
+    imposed the retained one since)."""
+
+    plan = dossier.plan_importe
+    return plan is not None and meters_per_unit(plan.unite_detectee) is not None
+
+
+def _usage_summary(dossier: Dossier) -> dict[str, object]:
+    usage = dossier.profile_usage
+    current = None
+    if usage is not None and usage.mode == "profil":
+        try:
+            current = profile_repository.get(usage.profile_id)
+        except ProfileNotFoundError:
+            current = None
+    return usage_summary(dossier, current)
+
+
+def _profile_report(profile: DrawingProfile, snapshot: QuickAnalysisSnapshot) -> dict[str, object]:
+    dossier = snapshot.dossier
+    report = evaluate_profile(
+        profile,
+        dossier.controle_technique,
+        dossier.planches,
+        unit_declared=_file_declares_unit(dossier),
+    )
+    classes = {
+        candidate_id: ROLE_PREVIEW_CLASSES[role]
+        for role, ids in report["role_ids"].items()
+        for candidate_id in ids
+    }
+    report["preview"] = build_class_preview(dossier.controle_technique.zones_candidates, classes)
+    return report
+
+
+def _report_fragments(report: dict[str, object]) -> dict[str, str]:
+    macros = templates.env.get_template("_profile_report.html").module
+    fragments = {
+        "drawing": macros.facts(report["drawing"]),
+        "lots": macros.facts(report["lots"]),
+        "lot_examples": macros.examples(report["lot_examples"]),
+        "surfaces": macros.facts(report["surfaces"]),
+        "surface_examples": macros.examples(report["surface_examples"]),
+        "levels": macros.facts(report["levels"]),
+        "annexes": macros.facts(report["annexes"]),
+        "versions": macros.facts(report["versions"]),
+        "report": macros.report(report),
+        "preview": macros.preview(report["preview"]),
+    }
+    fragments.update({f"role_{role}": macros.facts(lines) for role, lines in report["roles"].items()})
+    return {key: str(value) for key, value in fragments.items()}
+
+
+def _optional_analysis(analysis_id: str | None) -> QuickAnalysisSnapshot | None:
+    if not analysis_id:
+        return None
+    try:
+        return analysis_repository.get(analysis_id)
+    except QuickAnalysisNotFoundError:
+        return None
+
+
+def _profiles_page(
+    request: Request, message: str | None = None, status_code: int = 200, notice: bool = False
+) -> HTMLResponse:
+    profiles, unreadable = profile_repository.list()
+    return templates.TemplateResponse(
+        request=request,
+        name="profiles.html",
+        context={
+            "profiles": profiles,
+            "default_id": profile_repository.default_id(),
+            "unreadable": unreadable,
+            "message": message,
+            "notice": notice,
+            "status_labels": STATUS_LABELS,
+            "modified": {item.id: _relative_time(item.updated_at) for item in profiles},
+        },
+        status_code=status_code,
+    )
+
+
+def _profile_wizard(
+    request: Request,
+    profile: DrawingProfile,
+    snapshot: QuickAnalysisSnapshot | None,
+    *,
+    is_new: bool,
+    errors: list[str] | None = None,
+    status_code: int = 200,
+    analysis_missing: bool = False,
+) -> HTMLResponse:
+    context: dict[str, object] = {
+        "profile": profile,
+        "snapshot": snapshot,
+        "is_new": is_new,
+        "errors": errors or [],
+        "analysis_missing": analysis_missing,
+        "layer_roles": LAYER_ROLES,
+        "text_sources": TEXT_SOURCES,
+        "unit_options": UNIT_OPTIONS,
+        "saved": request.query_params.get("enregistre") == "1",
+        "from_flow": request.query_params.get("parcours") == "1",
+    }
+    if snapshot is not None:
+        dossier = legacy_view(snapshot.dossier)
+        control = dossier.controle_technique
+        report = _profile_report(profile, snapshot)
+        _, explanations = infer_profile(dossier)
+        contour_counts = Counter(item.calque for item in control.zones_candidates)
+        text_counts = Counter(item.calque for item in control.textes)
+        context.update(
+            report=report,
+            fragments=_report_fragments(report),
+            explanations=explanations,
+            contour_layers=sorted(contour_counts.items()),
+            text_layers=sorted(text_counts.items()),
+            layout_names=[item.nom for item in control.layouts if item.nom.casefold() != "model"],
+            suggestions=[] if is_new else unmapped_layer_suggestions(profile, dossier),
+            plan_name=dossier.plan_importe.nom_fichier_original if dossier.plan_importe else "",
+        )
+    return templates.TemplateResponse(
+        request=request, name="profile_wizard.html", context=context, status_code=status_code
+    )
+
+
+def _with_check(profile: DrawingProfile, snapshot: QuickAnalysisSnapshot | None) -> DrawingProfile:
+    if snapshot is None:
+        return profile
+    report = _profile_report(profile, snapshot)
+    return profile.model_copy(update={"last_check": ProfileCheck(status=report["status"])})
+
+
+@app.get("/profils", response_class=HTMLResponse)
+async def profiles_list(request: Request) -> HTMLResponse:
+    notices = {
+        "supprime": {"1": "Le profil a été supprimé."},
+        "defaut": {"1": "Profil par défaut enregistré : il sera présélectionné à chaque dépôt de plan compatible.", "0": "Aucun profil par défaut."},
+    }
+    message = next(
+        (texts[value] for key, texts in notices.items() if (value := request.query_params.get(key)) in texts), None
+    )
+    return _profiles_page(request, message, notice=message is not None)
+
+
+@app.post("/profils/analyse", response_class=HTMLResponse)
+async def profile_from_plan(request: Request, file: UploadFile | None = None) -> Response:
+    try:
+        snapshot = await _create_analysis(file)
+    except Exception as exc:
+        message, status = _analysis_failure(exc)
+        return _profiles_page(request, message, status)
+    return RedirectResponse(f"/profils/nouveau?analyse={snapshot.id}", status_code=303)
+
+
+@app.get("/profils/nouveau", response_class=HTMLResponse)
+async def new_profile(request: Request, analyse: str = "") -> HTMLResponse:
+    snapshot = _optional_analysis(analyse)
+    if snapshot is None:
+        return _profiles_page(request, "Analyse introuvable ou expirée : déposez à nouveau le plan.", 404)
+    profile, _ = infer_profile(legacy_view(snapshot.dossier))
+    return _profile_wizard(request, profile, snapshot, is_new=True)
+
+
+@app.post("/profils/apercu")
+async def profile_preview(request: Request, analyse: str = "") -> JSONResponse:
+    """Live check of the profile being edited; nothing is saved."""
+
+    snapshot = _optional_analysis(analyse)
+    if snapshot is None:
+        return JSONResponse({"ok": False, "messages": ["Analyse introuvable ou expirée."]}, status_code=404)
+    try:
+        profile = profile_from_form(await request.form())
+    except ProfileFormError as exc:
+        return JSONResponse({"ok": False, "messages": exc.messages}, status_code=422)
+    report = _profile_report(profile, snapshot)
+    return JSONResponse(
+        {
+            "ok": True,
+            "status": report["status"],
+            "status_label": report["status_label"],
+            "conclusion": report["conclusion"],
+            "fragments": _report_fragments(report),
+        }
+    )
+
+
+@app.post("/profils/enregistrer", response_class=HTMLResponse)
+async def create_profile(request: Request, analyse: str = "") -> Response:
+    snapshot = _optional_analysis(analyse)
+    form = await request.form()
+    try:
+        profile = profile_from_form(form)
+    except ProfileFormError as exc:
+        draft, _ = (
+            infer_profile(legacy_view(snapshot.dossier))
+            if snapshot
+            else (DrawingProfile(name="Nouveau profil de dessin"), None)
+        )
+        return _profile_wizard(request, draft, snapshot, is_new=True, errors=exc.messages, status_code=422)
+    saved = profile_repository.save(_with_check(profile, snapshot))
+    suffix = f"&analyse={snapshot.id}" if snapshot else ""
+    if snapshot and request.query_params.get("parcours") == "1":
+        suffix += "&parcours=1"
+    return RedirectResponse(f"/profils/{saved.id}?enregistre=1{suffix}", status_code=303)
+
+
+def _get_profile(profile_id: str) -> DrawingProfile:
+    try:
+        return profile_repository.get(profile_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Profil introuvable.") from exc
+
+
+@app.get("/profils/{profile_id}", response_class=HTMLResponse)
+async def edit_profile(request: Request, profile_id: str, analyse: str = "") -> HTMLResponse:
+    profile = _get_profile(profile_id)
+    snapshot = _optional_analysis(analyse)
+    return _profile_wizard(
+        request, profile, snapshot, is_new=False, analysis_missing=bool(analyse) and snapshot is None
+    )
+
+
+@app.post("/profils/{profile_id}", response_class=HTMLResponse)
+async def update_profile(request: Request, profile_id: str, analyse: str = "") -> Response:
+    form = await request.form()  # never await while holding the lock
+    with profile_repository_lock:
+        base = _get_profile(profile_id)
+        snapshot = _optional_analysis(analyse)
+        try:
+            profile = profile_from_form(form, base)
+        except ProfileFormError as exc:
+            return _profile_wizard(request, base, snapshot, is_new=False, errors=exc.messages, status_code=422)
+        saved = profile_repository.save(_with_check(profile, snapshot))
+    suffix = f"&analyse={snapshot.id}" if snapshot else ""
+    return RedirectResponse(f"/profils/{saved.id}?enregistre=1{suffix}", status_code=303)
+
+
+@app.post("/profils/{profile_id}/tester", response_class=HTMLResponse)
+async def test_profile(request: Request, profile_id: str, file: UploadFile | None = None) -> Response:
+    profile = _get_profile(profile_id)
+    try:
+        snapshot = await _create_analysis(file)
+    except Exception as exc:
+        message, status = _analysis_failure(exc)
+        return _profile_wizard(request, profile, None, is_new=False, errors=[message], status_code=status)
+    return RedirectResponse(f"/profils/{profile.id}?analyse={snapshot.id}#etape-5", status_code=303)
+
+
+@app.post("/profils/{profile_id}/dupliquer")
+async def duplicate_profile(profile_id: str) -> RedirectResponse:
+    _get_profile(profile_id)
+    copy = profile_repository.duplicate(profile_id)
+    return RedirectResponse(f"/profils/{copy.id}", status_code=303)
+
+
+@app.post("/profils/{profile_id}/supprimer")
+async def delete_profile(profile_id: str) -> RedirectResponse:
+    try:
+        profile_repository.delete(profile_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Profil introuvable.") from exc
+    return RedirectResponse("/profils?supprime=1", status_code=303)
+
+
+@app.post("/profils/{profile_id}/defaut")
+async def set_default_profile(profile_id: str) -> RedirectResponse:
+    try:
+        profile_repository.set_default(profile_id)
+    except ProfileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Profil introuvable.") from exc
+    return RedirectResponse("/profils?defaut=1", status_code=303)
+
+
+@app.post("/profils/defaut/retirer")
+async def clear_default_profile() -> RedirectResponse:
+    profile_repository.set_default(None)
+    return RedirectResponse("/profils?defaut=0", status_code=303)
+
+
+# Daily flow: choose the profile of an inspected plan -----------------------
+
+
+def _profile_options(snapshot: QuickAnalysisSnapshot) -> dict[str, object]:
+    """Saved profiles assessed on the plan, plus the automatic engine.
+
+    A profile is preselected when it was already chosen for this plan, or is
+    the default one and not « peu compatible », or is clearly recommended.
+    Otherwise nothing is preselected.
+    """
+
+    profiles, unreadable = profile_repository.list()
+    dossier = snapshot.dossier
+    control = dossier.controle_technique
+    unit_declared = _file_declares_unit(dossier)
+    assessments = {
+        profile.id: compatibility_cache.get(snapshot.id, profile, control, unit_declared) for profile in profiles
+    }
+    recommended = recommend(assessments)
+    default_id = profile_repository.default_id()
+    last_used = profile_repository.last_used()
+    recent = max((key for key in assessments if key in last_used), key=last_used.__getitem__, default=None)
+    usage = dossier.profile_usage
+    if not is_pending(snapshot):
+        if usage is not None and usage.mode == "profil":
+            checked = usage.profile_id if usage.profile_id in assessments else None
+        else:
+            checked = "legacy"
+    elif default_id in assessments and assessments[default_id].level != "peu":
+        checked = default_id
+    else:
+        checked = recommended
+    ordered = sorted(
+        profiles,
+        key=lambda item: (
+            item.id != checked,
+            item.id != recommended,
+            item.id != default_id,
+            -(last_used[item.id].timestamp() if item.id in last_used else 0),
+            item.name.casefold(),
+        ),
+    )
+    options = [
+        {
+            "id": item.id,
+            "name": item.name,
+            "revision": item.revision,
+            "compatibility": assessments[item.id],
+            "recommended": item.id == recommended,
+            "default": item.id == default_id,
+            "recent": item.id == recent,
+        }
+        for item in ordered
+    ]
+    return {"options": options, "checked": checked, "unreadable": unreadable}
+
+
+def _profile_choice_page(
+    request: Request,
+    snapshot: QuickAnalysisSnapshot,
+    *,
+    selected: str | None = None,
+    warning: object | None = None,
+    error: str | None = None,
+    status_code: int = 200,
+) -> HTMLResponse:
+    choice = _profile_options(snapshot)
+    if selected is not None:
+        choice["checked"] = selected
+    plan = snapshot.dossier.plan_importe
+    return templates.TemplateResponse(
+        request=request,
+        name="profile_choice.html",
+        context={
+            **choice,
+            "analysis": snapshot,
+            "plan_name": plan.nom_fichier_original if plan else "",
+            "pending": is_pending(snapshot),
+            "warning": warning,
+            "error": error,
+            "levels": COMPATIBILITY_LEVELS,
+        },
+        status_code=status_code,
+    )
+
+
+@app.get("/analyses/{analysis_id}/profil", response_class=HTMLResponse)
+async def choose_profile(request: Request, analysis_id: str) -> HTMLResponse:
+    return _profile_choice_page(request, _get_quick_analysis(analysis_id))
+
+
+@app.post("/analyses/{analysis_id}/profil", response_class=HTMLResponse)
+async def analyse_with_profile(
+    request: Request,
+    analysis_id: str,
+    profile: str = Form(""),
+    confirm: str = Form(""),
+) -> Response:
+    """Business analysis of the inspected plan with the chosen profile.
+
+    The stored snapshot is reused: the plan is never read again. A profile
+    that fits the plan poorly is applied only after an explicit confirmation.
+    """
+
+    snapshot = _get_quick_analysis(analysis_id)
+    if profile == "legacy":
+        usage = None
+    else:
+        try:
+            chosen = profile_repository.get(profile)
+        except ProfileNotFoundError:
+            return _profile_choice_page(
+                request, snapshot, error="Choisissez un profil de dessin ou l’analyse automatique.", status_code=422
+            )
+        dossier = snapshot.dossier
+        compatibility = compatibility_cache.get(
+            snapshot.id, chosen, dossier.controle_technique, _file_declares_unit(dossier)
+        )
+        if compatibility.level == "peu" and confirm != "1":
+            return _profile_choice_page(
+                request, snapshot, selected=chosen.id, warning={"name": chosen.name, "compatibility": compatibility}
+            )
+        usage = usage_from_profile(chosen)
+    apply_profile_choice(snapshot.dossier, usage)
+    analysis_repository.update(snapshot)
+    return RedirectResponse(f"/analyses/{analysis_id}", status_code=303)

@@ -5,15 +5,18 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
     field_validator,
+    model_serializer,
     model_validator,
 )
+
+from app.profiles.models import ProfileRules
 
 
 def utc_now() -> datetime:
@@ -22,6 +25,29 @@ def utc_now() -> datetime:
 
 class CanonicalModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+# Who decided: the drawing profile of the dossier or the automatic (legacy)
+# engine. Unset on dossiers analysed without a profile.
+Origine = Literal["profil", "legacy"]
+
+
+class OmitUnsetModel(CanonicalModel):
+    """Leave the listed fields out of the JSON while they are None.
+
+    They were added after dossiers had been validated: omitting them keeps
+    older dossiers byte-identical, and so their validation fingerprint.
+    """
+
+    _omit_when_none: ClassVar[tuple[str, ...]] = ()
+
+    @model_serializer(mode="wrap")
+    def _omit_unset(self, handler):
+        data = handler(self)
+        for name in self._omit_when_none:
+            if data.get(name, 0) is None:
+                del data[name]
+        return data
 
 
 class BBox(CanonicalModel):
@@ -209,7 +235,9 @@ class CandidateZone(CanonicalModel):
     provenance: Provenance
 
 
-class Evidence(CanonicalModel):
+class Evidence(OmitUnsetModel):
+    _omit_when_none = ("origine",)
+
     id: str
     polarite: EvidencePolarity
     source: str
@@ -219,6 +247,7 @@ class Evidence(CanonicalModel):
     distance: float | None = Field(default=None, ge=0)
     candidate_zone_ids: list[str] = Field(default_factory=list)
     provenance: Provenance | None = None
+    origine: Origine | None = None
 
 
 class ControleTechnique(CanonicalModel):
@@ -269,12 +298,17 @@ class CategorieZone(str, Enum):
     AUTRE = "autre"
 
 
-class BusinessZoneCandidate(CanonicalModel):
+class BusinessZoneCandidate(OmitUnsetModel):
+    _omit_when_none = ("origine",)
+
     candidate_zone_id: str
     categorie_proposee: CategorieZone
     statut: VerificationStatus
+    # Lot suggested for an annex; never applied without user confirmation.
+    numero_lot_propose: str | None = None
     evidence_ids: list[str] = Field(default_factory=list)
     motif: str
+    origine: Origine | None = None
 
 
 class ManualReconciliationDecision(CanonicalModel):
@@ -286,11 +320,16 @@ class ManualReconciliationDecision(CanonicalModel):
     horodatage: datetime = Field(default_factory=utc_now)
 
 
-class LotProposal(CanonicalModel):
+class LotProposal(OmitUnsetModel):
+    _omit_when_none = ("origine",)
+
     id: str
     numero_propose: str
     occurrence_ids: list[str] = Field(default_factory=list)
     candidate_zone_ids: list[str] = Field(default_factory=list)
+    # Other representations of the lot that are not added to its surface
+    # (duplicated copy, unannotated earlier version); kept for review.
+    candidate_zone_ids_ecartes: list[str] = Field(default_factory=list)
     surface_geometrique_m2: float = Field(default=0.0, ge=0)
     surface_annotee_m2: float | None = Field(default=None, ge=0)
     surface_proposee_m2: float | None = Field(default=None, ge=0)
@@ -298,6 +337,7 @@ class LotProposal(CanonicalModel):
     statut: VerificationStatus
     evidence_ids: list[str] = Field(default_factory=list)
     decision_manuelle: ManualReconciliationDecision | None = None
+    origine: Origine | None = None
 
 
 class GlobalCheckStatus(str, Enum):
@@ -429,7 +469,35 @@ class Generation(CanonicalModel):
     avertissements: list[str] = Field(default_factory=list)
 
 
-class Dossier(CanonicalModel):
+class ProfileUsage(CanonicalModel):
+    """How the dossier was analysed, frozen at analysis time.
+
+    ``rules`` is an exact copy of the profile rules then in force: the
+    dossier never reads the stored, editable profile again. Only rules are
+    kept, never drawing data.
+    """
+
+    mode: Literal["profil", "legacy"]
+    profile_id: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    profile_name: str | None = Field(default=None, max_length=120)
+    revision: int | None = Field(default=None, ge=1)
+    content_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    rules: ProfileRules | None = None
+    analysed_at: datetime = Field(default_factory=utc_now)
+
+    @model_validator(mode="after")
+    def complete_for_its_mode(self) -> "ProfileUsage":
+        details = (self.profile_id, self.profile_name, self.revision, self.content_hash, self.rules)
+        if self.mode == "profil" and any(item is None for item in details):
+            raise ValueError("Un profil utilisé doit être entièrement identifié.")
+        if self.mode == "legacy" and any(item is not None for item in details):
+            raise ValueError("L’analyse automatique ne référence aucun profil.")
+        return self
+
+
+class Dossier(OmitUnsetModel):
+    _omit_when_none = ("profile_usage",)
+
     schema_version: Literal["1.0", "1.1", "1.2"] = "1.1"
     id: str
     reference: str
@@ -461,6 +529,8 @@ class Dossier(CanonicalModel):
     milliemes: list[Millieme] = Field(default_factory=list)
     grille_milliemes_complete: bool = False
     generations: list[Generation] = Field(default_factory=list)
+    # Absent on dossiers created before drawing profiles: read as legacy.
+    profile_usage: ProfileUsage | None = None
 
     @field_validator("adresse", mode="before")
     @classmethod

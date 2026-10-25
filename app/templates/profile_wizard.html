@@ -1,0 +1,315 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  {% set page_title %}{% if is_new %}Nouveau profil{% else %}{{ profile.name }}{% endif %} — Profils de dessin — GeoFlow{% endset %}
+  {% include "_head.html" %}
+</head>
+<body>
+{% macro chips(name, values, options_id, placeholder, label) %}
+<div class="chip-field" data-chip-field data-name="{{ name }}">
+  <ul class="chips" data-chips aria-label="{{ label }}">
+    {% for value in values %}
+    <li class="chip"><span>{{ value }}</span><input type="hidden" name="{{ name }}" value="{{ value }}"><button type="button" class="chip-remove" data-chip-remove aria-label="Retirer {{ value }}">×</button></li>
+    {% endfor %}
+  </ul>
+  <input type="text" class="chip-input" list="{{ options_id }}" placeholder="{{ placeholder }}" maxlength="128" data-chip-input aria-label="Ajouter à « {{ label }} »">
+</div>
+{% endmacro %}
+
+{% macro source_list(name, values) %}
+<ol class="source-list" data-source-list data-name="{{ name }}" aria-label="Sources par ordre de priorité">
+  {% for value in values %}
+  <li data-value="{{ value }}">
+    <input type="hidden" name="{{ name }}" value="{{ value }}">
+    <span class="source-rank" aria-hidden="true">{{ loop.index }}</span>
+    <span class="source-label">{{ text_sources[value] }}</span>
+    <span class="source-buttons">
+      <button type="button" class="icon-mini" data-source-up aria-label="Monter « {{ text_sources[value] }} »">↑</button>
+      <button type="button" class="icon-mini" data-source-down aria-label="Descendre « {{ text_sources[value] }} »">↓</button>
+      <button type="button" class="icon-mini" data-source-remove aria-label="Retirer « {{ text_sources[value] }} »">×</button>
+    </span>
+  </li>
+  {% endfor %}
+</ol>
+<label class="source-add">Ajouter une source
+  <select data-source-add>
+    <option value="">—</option>
+    {% for key, label in text_sources.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+  </select>
+</label>
+{% endmacro %}
+
+{% macro live(key, fallback="") %}
+<div class="live-facts" data-live="{{ key }}" aria-live="polite">{% if fragments %}{{ fragments[key]|safe }}{% else %}{{ fallback }}{% endif %}</div>
+{% endmacro %}
+
+<main class="shell wide-shell profile-shell">
+  <header class="app-bar">
+    <a class="app-brand" href="/" aria-label="Accueil GeoFlow">
+      <span class="mark" aria-hidden="true">G</span>
+      <span><strong>GeoFlow</strong><small>Profils de dessin</small></span>
+    </a>
+    <span class="app-bar-actions">
+      <a class="secondary" href="/profils">Tous les profils</a>
+      {% include "_theme_toggle.html" %}
+    </span>
+  </header>
+
+  <div class="profile-head">
+    <div>
+      <p class="eyebrow">{% if is_new %}Nouveau profil{% else %}Profil de dessin{% endif %}</p>
+      <h1 data-profile-title>{{ profile.name }}</h1>
+      <p class="muted">{% if snapshot %}Vérifié sur <span class="wrap-anywhere">{{ plan_name }}</span>. Les exemples affichés viennent de ce plan ; ils ne sont pas enregistrés dans le profil.{% else %}Aucun plan de vérification : déposez-en un pour contrôler ce profil.{% endif %}</p>
+    </div>
+    {% if report %}<span class="status-pill {% if report.status == 'complet' %}ok{% elif report.status == 'avertissements' %}warning{% else %}blocked{% endif %}" data-profile-status>{{ report.status_label }}</span>{% endif %}
+  </div>
+
+  {% if saved and from_flow and snapshot %}
+  <div class="notice flow-return" role="status">
+    <p>Profil enregistré. Le plan <span class="wrap-anywhere">{{ plan_name }}</span> attend toujours son analyse : inutile de le déposer à nouveau.</p>
+    <form action="/analyses/{{ snapshot.id }}/profil" method="post">
+      <input type="hidden" name="profile" value="{{ profile.id }}">
+      <button type="submit">Utiliser ce profil pour analyser le plan</button>
+    </form>
+  </div>
+  {% elif saved %}<div class="notice" role="status">Profil enregistré.</div>{% endif %}
+  {% if analysis_missing %}<div class="warning" role="status">L’analyse de vérification a expiré : déposez à nouveau un plan pour contrôler le profil.</div>{% endif %}
+  <div class="alert" role="alert" data-profile-errors {% if not errors %}hidden{% endif %}>{% for error in errors %}<p>{{ error }}</p>{% endfor %}</div>
+
+  <nav class="profile-steps" aria-label="Étapes du profil" data-profile-steps>
+    {% for label in ["Dessin", "Zones métier", "Identification", "Versions & priorités", "Vérification"] %}
+    <button type="button" class="profile-step-tab" data-step-tab="{{ loop.index }}"><span class="step-icon" aria-hidden="true">{{ loop.index }}</span> {{ label }}</button>
+    {% endfor %}
+  </nav>
+
+  {% if snapshot %}
+  <datalist id="contour-layers">{% for name, count in contour_layers %}<option value="{{ name }}" label="{{ count }} contour(s)"></option>{% endfor %}</datalist>
+  <datalist id="text-layers">{% for name, count in text_layers %}<option value="{{ name }}" label="{{ count }} texte(s)"></option>{% endfor %}</datalist>
+  {% endif %}
+
+  <form
+    id="profile-form"
+    class="profile-form"
+    method="post"
+    action="{% if is_new %}/profils/enregistrer{% else %}/profils/{{ profile.id }}{% endif %}{% if snapshot %}?analyse={{ snapshot.id }}{% if from_flow %}&amp;parcours=1{% endif %}{% endif %}"
+    {% if snapshot %}data-preview-url="/profils/apercu?analyse={{ snapshot.id }}"{% endif %}
+    data-profile-form
+  >
+    <!-- 1. Dessin -->
+    <section class="panel profile-step" data-step="1" id="etape-1" aria-labelledby="step-1-title">
+      <h2 id="step-1-title"><span class="step-number-inline">1</span> Dessin</h2>
+      <div class="profile-grid">
+        <label>Unité utilisée
+          <select name="unit">
+            {% for value, label in unit_options %}<option value="{{ value }}" {% if profile.units.unit == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          {% if explanations %}
+          {% if explanations.unit.guessed %}
+          <small class="field-warning">▲ Le plan ne déclare pas explicitement son unité. GeoFlow propose cette valeur : {{ explanations.unit.reason }}</small>
+          {% else %}
+          <small>Détecté dans le fichier : {{ explanations.unit.declared|unit_label }}</small>
+          {% endif %}
+          {% endif %}
+        </label>
+        <fieldset>
+          <legend>Source géométrique métier</legend>
+          {% for value, label in [("model", "Espace objet (Model)"), ("layouts", "Présentation(s)"), ("model_layouts", "Model et certaines présentations")] %}
+          <label class="radio-line"><input type="radio" name="geometry_source" value="{{ value }}" {% if profile.geometry.source == value %}checked{% endif %}> {{ label }}</label>
+          {% endfor %}
+          {% if explanations %}<small>Observé : {{ explanations.geometry.model }} zone(s) métier dans Model{% for name, count in explanations.geometry.layouts.items() %}, {{ count }} dans « {{ name }} »{% endfor %}.</small>{% endif %}
+          {% set layouts = layout_names or profile.geometry.layouts %}
+          {% if layouts %}
+          <div class="layout-choice" data-layout-choice>
+            <span class="muted">Présentations concernées</span>
+            {% for name in layouts %}
+            <label class="radio-line"><input type="checkbox" name="geometry_layouts" value="{{ name }}" {% if name in profile.geometry.layouts %}checked{% endif %}> {{ name }}</label>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </fieldset>
+        <fieldset>
+          <legend>Règles géométriques <span class="badge neutral">Recommandations GeoFlow</span></legend>
+          <label class="radio-line"><input type="checkbox" name="rule_closed" value="1" {% if profile.geometry.closed_required %}checked{% endif %}> Contours fermés requis</label>
+          <label class="radio-line"><input type="checkbox" name="rule_planar" value="1" {% if profile.geometry.planar_required %}checked{% endif %}> Géométrie 2D / planaire requise</label>
+          <label class="radio-line"><input type="checkbox" name="rule_self_intersection" value="1" {% if profile.geometry.reject_self_intersections %}checked{% endif %}> Contours auto-intersectés refusés</label>
+          <small>Proposées par GeoFlow, pas tirées de votre charte. L’inspection ne retient déjà que les polylignes 2D fermées.</small>
+        </fieldset>
+      </div>
+      {{ live("drawing") }}
+    </section>
+
+    <!-- 2. Zones métier -->
+    <section class="panel profile-step" data-step="2" id="etape-2" aria-labelledby="step-2-title">
+      <h2 id="step-2-title"><span class="step-number-inline">2</span> Zones métier</h2>
+      <p class="muted">Calques qui portent chaque type de zone. Choisissez parmi les calques du plan ou saisissez un motif (<code>*</code> = n’importe quelle suite, <code>?</code> = un caractère).</p>
+      {% if suggestions %}
+      <div class="suggestions" data-suggestions>
+        <h3>Nouveaux calques dans ce plan</h3>
+        {% for item in suggestions %}
+        <div class="suggestion" data-suggestion data-role="role_{{ item.role }}" data-layer="{{ item.layer }}">
+          <p><strong>« {{ item.layer }} »</strong> ({{ item.count }} contour(s)) ressemble au rôle « {{ layer_roles[item.role] }} » : {{ item.reason }}.</p>
+          <span><button type="button" class="secondary small" data-suggestion-add>Ajouter au profil</button> <button type="button" class="text-button" data-suggestion-ignore>Ignorer</button></span>
+        </div>
+        {% endfor %}
+        <small>Rien n’est ajouté sans votre clic, ni enregistré avant « Enregistrer le profil ».</small>
+      </div>
+      {% endif %}
+      <div class="role-grid">
+        {% for role, label in layer_roles.items() %}
+        <div class="role-card">
+          <h3>{{ label }}</h3>
+          {{ chips("role_" ~ role, profile.layer_roles[role], "contour-layers", "Ajouter un calque ou un motif…", label) }}
+          {{ live("role_" ~ role) }}
+          {% if explanations and explanations.roles[role] %}
+          <details class="why">
+            <summary>Pourquoi ?</summary>
+            <ul>{% for layer, reason in explanations.roles[role].items() %}<li class="is-positive"><span aria-hidden="true">✓</span><span>« {{ layer }} » : {{ reason }}</span></li>{% endfor %}</ul>
+          </details>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {{ live("preview") }}
+    </section>
+
+    <!-- 3. Identification -->
+    <section class="panel profile-step" data-step="3" id="etape-3" aria-labelledby="step-3-title">
+      <h2 id="step-3-title"><span class="step-number-inline">3</span> Identification</h2>
+      <div class="ident-grid">
+        <div class="ident-card">
+          <h3>Numéro du lot</h3>
+          <label>Calques des numéros</label>
+          {{ chips("lot_layers", profile.lot_identification.layers, "text-layers", "Tous les calques si vide", "Calques des numéros de lot") }}
+          <span class="field-label">Sources, par priorité</span>
+          {{ source_list("lot_sources", profile.lot_identification.sources) }}
+          <div class="profile-grid compact">
+            <label>Motif <input name="lot_pattern" value="{{ profile.lot_identification.pattern }}" maxlength="60" autocomplete="off" aria-describedby="lot-pattern-help"></label>
+            <label>Distance « texte proche » <input name="lot_radius" value="{{ profile.lot_identification.radius|string|replace('.', ',') }}" inputmode="decimal"></label>
+          </div>
+          <small id="lot-pattern-help">Utilisez <code>{numero}</code> à l’endroit du numéro, par exemple <code>LOT {numero}</code>.</small>
+          {{ live("lot_examples") }}
+          {{ live("lots") }}
+        </div>
+        <div class="ident-card">
+          <h3>Surface annotée</h3>
+          <label>Calques des surfaces</label>
+          {{ chips("surface_layers", profile.surface_identification.layers, "text-layers", "Tous les calques si vide", "Calques des surfaces annotées") }}
+          <span class="field-label">Sources, par priorité</span>
+          {{ source_list("surface_sources", profile.surface_identification.sources) }}
+          <div class="profile-grid compact">
+            <label>Motif <input name="surface_pattern" value="{{ profile.surface_identification.pattern }}" maxlength="60" autocomplete="off"></label>
+            <label>Distance « texte proche » <input name="surface_radius" value="{{ profile.surface_identification.radius|string|replace('.', ',') }}" inputmode="decimal"></label>
+            <label>Tolérance (m²) <input name="tolerance_abs" value="{{ profile.surface_identification.tolerance_abs_m2|string|replace('.', ',') }}" inputmode="decimal"></label>
+            <label>Tolérance relative (%) <input name="tolerance_rel" value="{{ profile.surface_identification.tolerance_rel_pct|string|replace('.', ',') }}" inputmode="decimal"></label>
+          </div>
+          <small>Motif avec <code>{surface}</code>, par exemple <code>S={surface}m²</code>. La plus grande des deux tolérances s’applique.</small>
+          {{ live("surface_examples") }}
+          {{ live("surfaces") }}
+        </div>
+        <div class="ident-card wide">
+          <h3>Niveaux</h3>
+          <div class="profile-grid compact">
+            <div>
+              <label>Calques des niveaux</label>
+              {{ chips("level_layers", profile.levels.layers, "text-layers", "Tous les calques si vide", "Calques des niveaux") }}
+            </div>
+            <label>Distance au niveau <input name="level_radius" value="{{ profile.levels.radius|string|replace('.', ',') }}" inputmode="decimal"></label>
+          </div>
+          <table class="alias-table" data-alias-table>
+            <thead><tr><th scope="col">Valeur observée</th><th scope="col">Valeur métier</th><th><span class="visually-hidden">Retirer</span></th></tr></thead>
+            <tbody data-alias-rows>
+              {% for alias in profile.levels.aliases %}
+              <tr>
+                <td><input name="level_observed" value="{{ alias.observed }}" maxlength="40" aria-label="Valeur observée"></td>
+                <td><input name="level_value" value="{{ alias.value }}" maxlength="40" aria-label="Valeur métier"></td>
+                <td><button type="button" class="icon-mini" data-alias-remove aria-label="Retirer {{ alias.observed }}">×</button></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          <template data-alias-template><tr><td><input name="level_observed" maxlength="40" aria-label="Valeur observée"></td><td><input name="level_value" maxlength="40" aria-label="Valeur métier"></td><td><button type="button" class="icon-mini" data-alias-remove aria-label="Retirer">×</button></td></tr></template>
+          <button type="button" class="secondary small" data-alias-add>+ Ajouter une valeur</button>
+          {{ live("levels") }}
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. Versions & priorités -->
+    <section class="panel profile-step" data-step="4" id="etape-4" aria-labelledby="step-4-title">
+      <h2 id="step-4-title"><span class="step-number-inline">4</span> Versions &amp; priorités</h2>
+      <div class="ident-grid">
+        <div class="ident-card">
+          <h3>Anciennes versions</h3>
+          <p class="muted">Les calques d’archive de l’étape 2 sont toujours écartés.</p>
+          <label>Textes indicateurs d’une version inactive</label>
+          {{ chips("version_markers", profile.versions.markers, "", "Ex. VERSION * ABANDONNEE", "Textes indicateurs de version") }}
+          <small class="field-warning">▲ Une mention permet de détecter une version, mais pas de déterminer de manière certaine quelles géométries exclure : GeoFlow ne déduit aucune emprise d’un texte.</small>
+          {% set layouts = layout_names or profile.versions.excluded_layouts %}
+          {% if layouts %}
+          <fieldset>
+            <legend>Présentations exclues</legend>
+            {% for name in layouts %}<label class="radio-line"><input type="checkbox" name="excluded_layouts" value="{{ name }}" {% if name in profile.versions.excluded_layouts %}checked{% endif %}> {{ name }}</label>{% endfor %}
+          </fieldset>
+          {% endif %}
+          {{ live("versions") }}
+        </div>
+        <div class="ident-card">
+          <h3>Annexes</h3>
+          <label>Comment connaître le lot d’une annexe ?
+            <select name="annex_lot_source">
+              <option value="numero_dans_annexe" {% if profile.annexes.lot_source == "numero_dans_annexe" %}selected{% endif %}>Numéro de lot inscrit dans l’annexe</option>
+              <option value="aucune" {% if profile.annexes.lot_source == "aucune" %}selected{% endif %}>Aucune association explicite</option>
+            </select>
+          </label>
+          <fieldset>
+            <legend>Si aucun lot explicite</legend>
+            <label class="radio-line"><input type="radio" name="annex_fallback" value="proposer" {% if profile.annexes.fallback == "proposer" %}checked{% endif %}> Proposer un lot sans l’affecter</label>
+            <label class="radio-line"><input type="radio" name="annex_fallback" value="rien" {% if profile.annexes.fallback == "rien" %}checked{% endif %}> Ne rien proposer</label>
+          </fieldset>
+          {{ live("annexes") }}
+        </div>
+        <div class="ident-card">
+          <h3>Priorité en cas de contradiction</h3>
+          <label>Surface annotée ≠ géométrie
+            <select name="surface_conflict">
+              <option value="signaler" {% if profile.priorities.surface_conflict == "signaler" %}selected{% endif %}>Signaler sans trancher</option>
+              <option value="annotation" {% if profile.priorities.surface_conflict == "annotation" %}selected{% endif %}>L’annotation fait foi</option>
+              <option value="geometrie" {% if profile.priorities.surface_conflict == "geometrie" %}selected{% endif %}>La géométrie fait foi</option>
+            </select>
+          </label>
+          <small>Pour les numéros et les surfaces, l’ordre des sources de l’étape 3 fait foi.</small>
+          <label>Calques des titres de planche</label>
+          {{ chips("title_layers", profile.plans.title_layers, "text-layers", "Ajouter un calque…", "Calques des titres de planche") }}
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. Vérification -->
+    <section class="panel profile-step" data-step="5" id="etape-5" aria-labelledby="step-5-title">
+      <h2 id="step-5-title"><span class="step-number-inline">5</span> Vérification</h2>
+      {{ live("report", "Déposez un plan ci-dessous pour vérifier ce profil.") }}
+      <div class="save-row">
+        <label>Nom du profil <input name="name" value="{{ profile.name }}" maxlength="120" required data-profile-name></label>
+        <button type="submit" data-save-profile>Enregistrer le profil</button>
+      </div>
+    </section>
+
+    <div class="step-actions profile-nav" data-profile-nav>
+      <button type="button" class="secondary" data-step-prev>Précédent</button>
+      <button type="button" data-step-next>Suivant</button>
+    </div>
+  </form>
+
+  {% if not is_new %}
+  <section class="panel profile-test" aria-labelledby="profile-test-title">
+    <h2 id="profile-test-title">Tester sur un autre plan</h2>
+    <p class="muted">GeoFlow applique ce profil au plan déposé et signale les calques qu’il ne couvre pas. Le profil n’est jamais modifié sans votre accord.</p>
+    <form action="/profils/{{ profile.id }}/tester" method="post" enctype="multipart/form-data" class="test-form" data-busy-form>
+      <input name="file" type="file" accept=".dxf,.dwg" required aria-label="Plan DXF ou DWG à tester">
+      <button type="submit" class="secondary" data-busy-label="Analyse en cours…">Tester ce profil</button>
+    </form>
+  </section>
+  {% endif %}
+</main>
+</body>
+</html>

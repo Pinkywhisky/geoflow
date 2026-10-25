@@ -1,11 +1,8 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Lots & surfaces — {{ dossier.reference }} — GeoFlow</title>
-  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
-  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+  {% set page_title %}Lots & surfaces — {{ dossier.reference }} — GeoFlow{% endset %}
+  {% include "_head.html" %}
 </head>
 <body>
 <main class="shell wide-shell">
@@ -33,6 +30,23 @@
     <p class="technical-rule">Profil {{ reconciliation.profil_regles }} · règles {{ reconciliation.version_regles }} · tolérance max({{ reconciliation.tolerance_absolue_m2 }} m², {{ reconciliation.tolerance_relative * 100 }} %).</p>
   </section>
 
+  {% from "_plan_preview.html" import plan_svg, plan_legend %}
+  {% if plan_overview %}
+  <details class="panel plan-overview" open>
+    <summary>Aperçu du plan <span class="badge neutral">{{ plan_overview|map(attribute="contour_count")|sum }} contour(s)</span></summary>
+    <p class="muted">Rendu des contours détectés, coloré selon l’état des lots. Cliquez sur un numéro pour ouvrir la proposition.</p>
+    {{ plan_legend() }}
+    <div class="plan-overview-grid">
+      {% for preview in plan_overview %}
+      <figure class="plan-figure">
+        {{ plan_svg(preview, "Aperçu de la planche " ~ preview.region ~ " : " ~ preview.labels|length ~ " lot(s) proposé(s)") }}
+        <figcaption>Planche {{ preview.region }} · {{ preview.labels|length }} lot(s){% if preview.truncated %} · seuls les contours rattachés à un lot sont affichés{% endif %}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+  </details>
+  {% endif %}
+
   {% if not technical_mode %}
   <section class="panel work-queue">
     <div class="section-heading">
@@ -42,7 +56,7 @@
       </div>
       <span class="badge">{{ result_count }} résultat(s)</span>
     </div>
-    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid compact-filters">
+    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid compact-filters" data-auto-filter>
       <label for="proposal-q">Recherche
         <input id="proposal-q" name="q" type="search" value="{{ filters.q }}" placeholder="Numéro ou identifiant…">
       </label>
@@ -61,7 +75,7 @@
     <div class="proposal-list">
       {% for row in proposal_rows %}
       {% set proposal = row.proposal %}
-      <article class="lot-proposal status-{{ proposal.statut.value }}">
+      <article class="lot-proposal status-{{ proposal.statut.value }}" id="proposal-{{ proposal.id }}">
         <div class="candidate-head">
           <div>
             <span class="status-pill {{ proposal.statut.value }}">
@@ -79,30 +93,44 @@
           <strong class="area">{% if proposal.surface_proposee_m2 is not none %}{{ "%.2f"|format(proposal.surface_proposee_m2) }} m²{% else %}Surface non résolue{% endif %}</strong>
         </div>
 
+        <div class="proposal-body{% if row.preview %} has-preview{% endif %}">
+        {% if row.preview %}
+        <figure class="plan-figure proposal-preview">
+          {{ plan_svg(row.preview, "Contours du lot " ~ proposal.numero_propose ~ " et leur voisinage", "is-zoomed") }}
+          <figcaption>{{ row.candidates|length }} contour(s) du lot en surbrillance</figcaption>
+        </figure>
+        {% endif %}
+        <div class="proposal-details">
         <div class="surface-comparison">
           <span>Géométrie <strong>{{ "%.2f"|format(proposal.surface_geometrique_m2) }} m²</strong></span>
           <span>Annotation <strong>{% if proposal.surface_annotee_m2 is not none %}{{ "%.2f"|format(proposal.surface_annotee_m2) }} m²{% else %}absente{% endif %}</strong></span>
-          <span>Statut automatique <strong>{{ proposal.statut_automatique.value|replace("_", " ") }}</strong></span>
+          {% if proposal.surface_annotee_m2 is not none %}
+          {% set gap = proposal.surface_annotee_m2 - proposal.surface_geometrique_m2 %}
+          <span class="{% if proposal.statut.value == "contradictoire" %}gap-alert{% endif %}">Écart <strong>{{ "%+.2f"|format(gap) }} m²</strong></span>
+          {% endif %}
+          <span>Statut automatique <strong>{{ proposal.statut_automatique.value|verification_label }}</strong></span>
         </div>
 
         <details class="evidence-details">
-          <summary>Pourquoi cette proposition ?</summary>
+          <summary>Pourquoi cette proposition ? <span class="badge neutral">{{ row.evidence|length }} preuve(s)</span></summary>
           <ul class="evidence-list">
             {% for proof in row.evidence %}
             <li class="{{ proof.polarite.value }}">
-              <strong>{{ proof.source|replace("_", " ") }}</strong>
+              <strong><span aria-hidden="true">{% if proof.polarite.value == "negative" %}✕{% else %}✓{% endif %}</span> {{ proof.source|replace("_", " ") }}{% if proof.origine %} <small class="origin-tag">{% if proof.origine == "profil" %}profil{% else %}analyse automatique{% endif %}</small>{% endif %}</strong>
               <span>{{ proof.description }}</span>
               {% if proof.valeur is not none %}<small>Valeur : {{ proof.valeur }}{% if proof.distance is not none %} · distance {{ "%.2f"|format(proof.distance) }}{% endif %} · fiabilité {{ proof.fiabilite.value }}</small>{% endif %}
             </li>
             {% endfor %}
           </ul>
         </details>
+        </div>
+        </div>
 
         {% if proposal.decision_manuelle %}
         <div class="resolved-summary">
           <strong>Décision manuelle conservée</strong>
           <span>{{ proposal.decision_manuelle.motif }}</span>
-          <small>{{ proposal.decision_manuelle.horodatage.strftime("%d/%m/%Y à %H:%M") }} · proposition automatique initiale : {{ proposal.statut_automatique.value|replace("_", " ") }}</small>
+          <small>{{ proposal.decision_manuelle.horodatage.strftime("%d/%m/%Y à %H:%M") }} · proposition automatique initiale : {{ proposal.statut_automatique.value|verification_label }}</small>
         </div>
         {% endif %}
 
@@ -116,10 +144,19 @@
               <span>{{ candidate.id }} · {{ candidate.calque }} · {{ "%.2f"|format(candidate.surface_geometrique_m2 or 0) }} m²</span>
             </label>
             {% endfor %}
+            {% if row.set_aside %}
+            <p class="zone-selection-note">Autres représentations du lot, non additionnées — cochez-les seulement s’il s’agit d’un autre niveau :</p>
+            {% for candidate in row.set_aside %}
+            <label class="is-set-aside">
+              <input type="checkbox" name="candidate_ids" value="{{ candidate.id }}">
+              <span>{{ candidate.id }} · {{ candidate.calque }} · {{ "%.2f"|format(candidate.surface_geometrique_m2 or 0) }} m²</span>
+            </label>
+            {% endfor %}
+            {% endif %}
           </fieldset>
           <div class="proposal-fields">
             <label>Bâtiment <input name="building_code" required maxlength="60" value="A"></label>
-            <label>Niveau <input name="level_code" required maxlength="60" value="À confirmer"></label>
+            <label>Niveau <input name="level_code" required maxlength="60" value="{{ row.level }}" placeholder="Ex. RdC, R+1, Sous-sol"></label>
             <label>Numéro retenu <input name="lot_number" required maxlength="60" value="{{ proposal.numero_propose }}"></label>
             <label>Catégorie
               <select name="category">{% for value, label in categories %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select>
@@ -128,7 +165,7 @@
               <input name="reason" required maxlength="300" placeholder="Contrôle visuel, correction ou confirmation…">
             </label>
           </div>
-          <button type="submit">Confirmer ce lot</button>
+          <button type="submit">Confirmer le lot {{ proposal.numero_propose }}</button>
         </form>
         {% endif %}
 
@@ -141,8 +178,17 @@
       </article>
       {% else %}
       <div class="empty-state">
+        {% if not counts.proposed %}
+        <strong>GeoFlow n’a proposé aucun lot pour ce plan.</strong>
+        <span class="muted">Vérifiez qu’au moins une planche est retenue et que les calques de repères et de surfaces ne sont pas exclus.</span>
+        <a class="secondary" href="/dossiers/{{ dossier.id }}/controle">Revenir au contrôle</a>
+        {% elif filters.proposal_status == "review" and not filters.q %}
+        <strong>Rien à vérifier : toutes les propositions sont vérifiées ou confirmées.</strong>
+        <a class="secondary" href="/dossiers/{{ dossier.id }}/lots?proposal_status=all">Afficher toutes les propositions</a>
+        {% else %}
         <strong>Aucune proposition ne correspond à ce filtre.</strong>
-        <a href="/dossiers/{{ dossier.id }}/lots?proposal_status=all">Afficher toutes les propositions</a>
+        <a class="secondary" href="/dossiers/{{ dossier.id }}/lots?proposal_status=all">Afficher toutes les propositions</a>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
@@ -154,7 +200,7 @@
       <span class="badge">{{ result_count }} résultat(s)</span>
     </div>
     <p class="muted">Cette vue sert à l’audit technique. Un contour affiché ici n’est pas automatiquement une tâche métier.</p>
-    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid">
+    <form action="/dossiers/{{ dossier.id }}/lots" method="get" class="filter-grid" data-auto-filter>
       <input type="hidden" name="view" value="technical">
       <label>Recherche <input name="q" type="search" value="{{ filters.q }}" placeholder="Calque, handle, texte…"></label>
       <label>Calque
@@ -190,6 +236,95 @@
   </nav>
   {% endif %}
 
+  {% if annexes and annexes.rows %}
+  <section id="annexes" class="panel annex-panel" aria-labelledby="annexes-title">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Annexes</p>
+        <h2 id="annexes-title">Rattacher les annexes aux lots</h2>
+        <p class="muted">Caves, balcons, terrasses… restent des surfaces distinctes du lot. GeoFlow propose un lot seulement lorsqu’un seul lot est clairement désigné — repère unique à proximité, ou contact avec ses contours — ; rien n’est rattaché sans votre choix.</p>
+      </div>
+      <span class="autosave-hint">Sauvegarde automatique</span>
+    </div>
+
+    <div class="annex-toolbar">
+      <p class="annex-counts">
+        <span><strong>{{ annexes.counts.rattachee }}</strong> rattachée(s)</span>
+        <span><strong>{{ annexes.counts.proposee }}</strong> avec un lot proposé</span>
+        <span><strong>{{ annexes.counts.ambigue }}</strong> ambiguë(s)</span>
+        <span><strong>{{ annexes.counts.non_rattachee }}</strong> sans proposition</span>
+      </p>
+      <label class="annex-filter">Afficher
+        <select data-annex-filter>
+          <option value="todo">À traiter</option>
+          <option value="proposee">Lot proposé</option>
+          <option value="rattachee">Rattachées</option>
+          <option value="all">Toutes</option>
+        </select>
+      </label>
+      {% if annexes.pending_proposals %}
+      <form action="/dossiers/{{ dossier.id }}/annexes/confirm-proposals" method="post" data-confirm="Rattacher les {{ annexes.pending_proposals }} annexe(s) à leur lot proposé ? Chaque rattachement reste modifiable.">
+        <button type="submit" class="secondary">Accepter les {{ annexes.pending_proposals }} proposition(s)</button>
+      </form>
+      {% endif %}
+    </div>
+
+    {% if not dossier.lots %}
+    <p class="warning action-hint"><span aria-hidden="true">▲</span><span>Confirmez d’abord les lots ci-dessus : une annexe se rattache à un lot constitué.</span></p>
+    {% endif %}
+
+    <ul class="annex-list" data-annex-list>
+      {% for row in annexes.rows %}
+      <li class="annex-item state-{{ row.state }}" data-annex-state="{{ row.state }}">
+        {% if row.preview %}
+        <figure class="annex-preview">{{ plan_svg(row.preview, "Annexe de " ~ "%.2f"|format(row.surface or 0) ~ " m² et lots voisins", "is-zoomed") }}</figure>
+        {% endif %}
+        <div class="annex-body">
+          <div class="annex-head">
+            <strong>Annexe · {{ "%.2f"|format(row.surface or 0)|replace(".", ",") }} m²</strong>
+            <span class="status-pill {% if row.state == "rattachee" %}ok{% elif row.state == "proposee" %}warning{% else %}neutral{% endif %}" data-annex-label>{{ row.state_label }}{% if row.proposed_number %} : lot {{ row.proposed_number }}{% endif %}</span>
+          </div>
+          <small>{{ row.planche }}{% if row.texts %} · {{ row.texts|join(" · ") }}{% endif %}</small>
+          <form
+            action="/dossiers/{{ dossier.id }}/annexes/{{ row.candidate_id }}"
+            method="post"
+            class="annex-form"
+            data-autosave
+            data-annex-form
+            data-proposed-lot="{{ row.proposed_lot_id or '' }}"
+          >
+            <label>Lot
+              <select name="lot_id" {% if not dossier.lots %}disabled{% endif %}>
+                <option value="">Aucun / non rattachée</option>
+                {% for lot in dossier.lots %}
+                <option value="{{ lot.id }}" {% if row.lot_id == lot.id %}selected{% endif %}>Lot {{ lot.numero }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label>Niveau
+              <input name="level_code" maxlength="60" value="{{ row.level if row.level != "À préciser" else "" }}" placeholder="À préciser">
+            </label>
+            {% if row.proposed_lot_id %}
+            <button type="button" class="secondary small" data-annex-accept>Accepter le lot {{ row.proposed_number }}</button>
+            {% endif %}
+            <output class="autosave-note" data-form-status aria-live="polite"></output>
+          </form>
+          <details class="why">
+            <summary>Pourquoi ?</summary>
+            <ul>
+              {% for reason in row.reasons %}
+              <li class="{% if reason.positive %}is-positive{% else %}is-negative{% endif %}"><span aria-hidden="true">{% if reason.positive %}✓{% else %}▲{% endif %}</span><span>{{ reason.text }}</span></li>
+              {% endfor %}
+            </ul>
+          </details>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="empty-inline" data-annex-empty hidden>Aucune annexe dans ce filtre.</p>
+  </section>
+  {% endif %}
+
   <section class="panel technical-access">
     <div><p class="eyebrow">Audit</p><h2>{% if technical_mode %}Retour aux propositions{% else %}Détails techniques séparés{% endif %}</h2><p class="muted">Les contours non classés et exclus restent consultables sans encombrer la file de lots.</p></div>
     <a class="secondary" href="/dossiers/{{ dossier.id }}/lots{% if not technical_mode %}?view=technical&assignment=all{% endif %}">{% if technical_mode %}Voir les lots proposés{% else %}Voir les contours{% endif %}</a>
@@ -203,7 +338,7 @@
         <h2>Compléter les lots constitués</h2>
         <p class="muted">L’usage, la désignation et les millièmes appartiennent au lot, même lorsqu’il contient plusieurs zones.</p>
       </div>
-      <span class="autosave-note">Sauvegarde automatique</span>
+      <span class="autosave-hint">Sauvegarde automatique</span>
     </div>
     <div class="lot-metadata-list">
       {% for lot in dossier.lots %}
@@ -271,7 +406,7 @@
         <input type="checkbox" name="complete" value="true" {% if dossier.grille_milliemes_complete %}checked{% endif %}>
         La grille est complète pour tous les lots
       </label>
-      <span>Total saisi : <strong>{{ millieme_total }} / 1000</strong></span>
+      <span class="millieme-total {% if millieme_total == 1000 %}is-complete{% elif millieme_total > 1000 %}is-over{% endif %}">Total saisi : <strong>{{ millieme_total }} / 1000</strong>{% if millieme_total and millieme_total != 1000 %} <small>({{ "%+d"|format(millieme_total - 1000) }})</small>{% endif %}</span>
       <output class="autosave-note" data-form-status aria-live="polite">Enregistré</output>
     </form>
   </section>

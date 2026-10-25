@@ -1,11 +1,8 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Synthèse — {{ dossier.reference }} — GeoFlow</title>
-  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
-  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+  {% set page_title %}Synthèse — {{ dossier.reference }} — GeoFlow{% endset %}
+  {% include "_head.html" %}
 </head>
 <body>
 <main class="shell wide-shell">
@@ -28,8 +25,8 @@
         <dl>
           <div><dt>Référence</dt><dd>{{ dossier.reference }}</dd></div>
           <div><dt>Type</dt><dd>Copropriété</dd></div>
-          <div><dt>Adresse</dt><dd>{% if dossier.adresse %}{{ dossier.adresse.ligne_voie or "Non renseignée" }}{% else %}Non renseignée{% endif %}</dd></div>
-          <div><dt>Cadastre</dt><dd>{{ dossier.references_cadastrales|length }} parcelle(s)</dd></div>
+          <div><dt>Adresse</dt><dd>{% if dossier.adresse and dossier.adresse.ligne_voie %}{{ dossier.adresse.ligne_voie }}{% else %}<span class="missing">Non renseignée</span>{% endif %}</dd></div>
+          <div><dt>Cadastre</dt><dd>{% if dossier.references_cadastrales %}{{ dossier.references_cadastrales|length }} parcelle(s){% else %}<span class="missing">Aucune parcelle</span>{% endif %}</dd></div>
         </dl>
       </section>
       <section>
@@ -37,7 +34,7 @@
         <dl>
           <div><dt>Fichier</dt><dd><span class="state-icon ok" aria-label="Conforme">✓</span> {{ dossier.plan_importe.type_fichier|upper }} importé</dd></div>
           <div><dt>Version</dt><dd>{{ dossier.plan_importe.version_dxf }}</dd></div>
-          <div><dt>Unité</dt><dd>{{ dossier.plan_importe.unite_retenue }}</dd></div>
+          <div><dt>Unité</dt><dd>{{ dossier.plan_importe.unite_retenue|unit_label }}</dd></div>
         </dl>
       </section>
       <section>
@@ -65,14 +62,14 @@
       {% for proposal in dossier.reconciliation.lot_proposals %}
       <div class="lot-summary">
         <strong>Lot {{ proposal.numero_propose }}</strong>
-        <span>{{ proposal.statut.value|replace("_", " ") }} · {{ proposal.candidate_zone_ids|length }} zone(s) · {% if proposal.surface_proposee_m2 is not none %}{{ "%.2f"|format(proposal.surface_proposee_m2) }} m²{% else %}surface non résolue{% endif %}</span>
+        <span><span class="status-pill {{ proposal.statut.value }}">{{ proposal.statut.value|verification_label }}</span> {{ proposal.candidate_zone_ids|length }} zone(s) · {% if proposal.surface_proposee_m2 is not none %}{{ "%.2f"|format(proposal.surface_proposee_m2) }} m²{% else %}surface non résolue{% endif %}</span>
       </div>
       {% endfor %}
     </div>
     {% for check in dossier.reconciliation.controles_globaux %}
     <div class="check-row {% if check.statut.value == "bloquant" %}blocked{% elif check.statut.value == "avertissement" %}warning{% else %}ok{% endif %}">
       <span aria-hidden="true">{% if check.statut.value == "bloquant" %}●{% elif check.statut.value == "avertissement" %}⚠{% else %}✓{% endif %}</span>
-      <div><strong>{{ check.code|replace("_", " ") }}</strong><p>{{ check.message }}</p></div>
+      <div><strong>{{ check.code|check_label }}</strong><p>{{ check.message }}</p></div>
     </div>
     {% endfor %}
   </section>
@@ -87,8 +84,15 @@
     {% if not readiness.blockers %}
     <div class="check-row ok"><span aria-hidden="true">✓</span><div><strong>Données métier cohérentes</strong><p>Les conditions nécessaires à la génération documentaire sont remplies.</p></div></div>
     {% endif %}
-    {% for item in readiness.blockers %}
-    <div class="check-row blocked"><span aria-hidden="true">●</span><div><strong>Blocage</strong><p>{{ item }}</p></div></div>
+    {% for item, link in blocker_rows %}
+    <div class="check-row blocked">
+      <span aria-hidden="true">●</span>
+      <div>
+        <strong>Blocage</strong>
+        <p>{{ item }}</p>
+        {% if link %}<p><a class="inline-action" href="{{ link[0] }}">{{ link[1] }}</a></p>{% endif %}
+      </div>
+    </div>
     {% endfor %}
     {% if readiness.user_actions %}
     <h3>Données métier à compléter</h3>
@@ -133,15 +137,16 @@
       {% if dossier.date_validation_donnees %}<small>{{ dossier.date_validation_donnees.strftime("%d/%m/%Y à %H:%M") }}</small>{% endif %}
     </div>
     {% else %}
-    <form action="/dossiers/{{ dossier.id }}/synthese/validate" method="post">
-      <button type="submit" {% if readiness.blockers %}disabled aria-disabled="true"{% endif %}>Valider le dossier</button>
+    <form action="/dossiers/{{ dossier.id }}/synthese/validate" method="post" class="validation-form">
+      <button type="submit" {% if readiness.blockers %}disabled aria-disabled="true" aria-describedby="validation-blocked"{% endif %}>Valider le dossier</button>
+      {% if readiness.blockers %}<small id="validation-blocked">{{ readiness.blockers|length }} blocage(s) à lever avant validation</small>{% endif %}
     </form>
     {% endif %}
   </section>
 
   <footer class="step-actions">
     <a class="secondary" href="/dossiers/{{ dossier.id }}/lots">Précédent</a>
-    {% if validation_current %}<a href="/dossiers/{{ dossier.id }}/documents">Suivant</a>{% else %}<button type="button" disabled>Suivant</button>{% endif %}
+    {% if validation_current %}<a href="/dossiers/{{ dossier.id }}/documents">Suivant</a>{% else %}<span class="next-hint"><small>Validez le dossier pour accéder au document</small><button type="button" disabled>Suivant</button></span>{% endif %}
   </footer>
 </main>
 </body>

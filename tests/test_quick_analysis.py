@@ -251,7 +251,9 @@ def test_no_zone_is_a_valid_weak_diagnostic(
 
     assert response.status_code == 200
     assert "Aucun contour 2D exploitable" in response.text
-    assert "Compréhension du plan</span>\n        <strong>Faible" in response.text
+    assert "Compréhension du plan" in response.text
+    assert 'data-understanding="faible"' in response.text
+    assert "Voir pourquoi" in response.text
 
 
 def test_auto_verified_lot_and_evidence_are_visible(quick_client) -> None:
@@ -266,8 +268,9 @@ def test_auto_verified_lot_and_evidence_are_visible(quick_client) -> None:
     assert response.status_code == 200
     assert "Lot 1" in response.text
     assert "Auto-vérifié" in response.text
-    assert "Pourquoi cette proposition ?" in response.text
-    assert "somme contours principaux" in response.text
+    assert "Pourquoi ?" in response.text
+    assert "Contours de surface principale rattachés : 10,00 m² au total" in response.text
+    assert "somme_contours_principaux" not in response.text
     assert "zone-a" not in response.text
 
 

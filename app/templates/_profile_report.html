@@ -1,0 +1,48 @@
+{% macro facts(lines) %}
+<ul class="fact-lines">
+  {% for line in lines %}
+  <li class="tone-{{ line.tone }}"><span class="fact-icon" aria-hidden="true">{% if line.tone == "ok" %}✓{% elif line.tone == "warning" %}▲{% elif line.tone == "error" %}✕{% else %}i{% endif %}</span><span><span class="visually-hidden">{% if line.tone == "ok" %}Conforme : {% elif line.tone == "warning" %}Avertissement : {% elif line.tone == "error" %}Bloquant : {% else %}Information : {% endif %}</span>{{ line.text }}</span></li>
+  {% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro examples(items) %}
+{% if items %}
+<dl class="example-list">
+  {% for shown, value in items %}
+  <div><dt>{{ shown }}</dt><dd>→ {{ value }}</dd></div>
+  {% endfor %}
+</dl>
+{% else %}
+<p class="muted">Aucun texte ne correspond à ce motif dans ce plan.</p>
+{% endif %}
+{% endmacro %}
+
+{% macro report(report) %}
+<div class="profile-report">
+  <p class="report-status status-{{ report.status }}"><strong>{{ report.status_label }}</strong> — {{ report.conclusion }}</p>
+  <div class="report-sections">
+    {% for section in report.sections %}
+    <section class="report-section">
+      <h3>{{ section.title }}</h3>
+      {{ facts(section.lines) }}
+    </section>
+    {% endfor %}
+  </div>
+</div>
+{% endmacro %}
+
+{% macro preview(data) %}
+{% if data %}
+{% from "_plan_preview.html" import plan_svg %}
+<figure class="plan-figure role-preview">
+  {{ plan_svg(data, "Aperçu des contours selon les rôles du profil") }}
+  <figcaption>
+    <span class="swatch is-ok" aria-hidden="true"></span> Surface principale
+    <span class="swatch is-review" aria-hidden="true"></span> Annexe
+    <span class="swatch is-excluded" aria-hidden="true"></span> Exclusion / archive
+    <span class="swatch is-context" aria-hidden="true"></span> Autre
+  </figcaption>
+</figure>
+{% endif %}
+{% endmacro %}

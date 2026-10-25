@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  {% set page_title %}Choisir le profil — {{ plan_name }} — GeoFlow{% endset %}
+  {% include "_head.html" %}
+</head>
+<body>
+{% from "_profile_report.html" import facts %}
+
+{% macro profile_card(option) %}
+{% set compatibility = option.compatibility %}
+<div class="choice-card level-{{ compatibility.level }}">
+  <input type="radio" id="choice-{{ option.id }}" name="profile" value="{{ option.id }}" required {% if checked == option.id %}checked{% endif %} aria-describedby="choice-{{ option.id }}-facts">
+  <label for="choice-{{ option.id }}" class="choice-label">
+    <span class="choice-name"><strong class="wrap-anywhere">{{ option.name }}</strong> <small>v{{ option.revision }}</small></span>
+    <span class="choice-badges">
+      {% if option.recommended %}<span class="status-pill ok">Recommandé</span>{% endif %}
+      {% if option.default %}<span class="status-pill neutral">Par défaut</span>{% endif %}
+      {% if option.recent %}<span class="status-pill neutral">Utilisé récemment</span>{% endif %}
+      <span class="status-pill {% if compatibility.level == 'compatible' %}ok{% elif compatibility.level == 'avertissements' %}warning{% else %}blocked{% endif %}">{{ compatibility.label }}</span>
+    </span>
+  </label>
+  <div id="choice-{{ option.id }}-facts" class="choice-facts">{{ facts(compatibility.reasons) }}</div>
+</div>
+{% endmacro %}
+
+{% macro legacy_card() %}
+<div class="choice-card level-legacy">
+  <input type="radio" id="choice-legacy" name="profile" value="legacy" required {% if checked == "legacy" %}checked{% endif %} aria-describedby="choice-legacy-facts">
+  <label for="choice-legacy" class="choice-label">
+    <span class="choice-name"><strong>GeoFlow automatique / Legacy</strong></span>
+    <span class="choice-badges"><span class="status-pill neutral">Toujours disponible</span></span>
+  </label>
+  <p id="choice-legacy-facts" class="choice-facts muted">Analyse actuelle de GeoFlow, sans profil : anciens plans, plans sans charte, cas particuliers.</p>
+</div>
+{% endmacro %}
+
+<main class="shell home-shell choice-shell">
+  <header class="app-bar">
+    <a class="app-brand" href="/" aria-label="Accueil GeoFlow">
+      <span class="mark" aria-hidden="true">G</span>
+      <span><strong>GeoFlow</strong><small>Analyse du plan</small></span>
+    </a>
+    <span class="app-bar-actions">
+      <a class="secondary" href="/">Accueil</a>
+      {% include "_theme_toggle.html" %}
+    </span>
+  </header>
+
+  <section class="choice" aria-labelledby="choice-title">
+    <p class="eyebrow">Plan · <span class="wrap-anywhere">{{ plan_name }}</span></p>
+    <h1 id="choice-title">Quel profil utiliser ?</h1>
+    <p class="muted choice-intro">Le plan a été lu une fois. Le profil indique comment interpréter ses calques et ses textes ; la compatibilité ci-dessous est mesurée sur ce plan.</p>
+
+    {% if error %}<div class="alert" role="alert">{{ error }}</div>{% endif %}
+    {% if unreadable %}<p class="warning">{{ unreadable }} fichier(s) de profil illisible(s) ont été ignorés.</p>{% endif %}
+
+    {% if warning %}
+    {% set poor = warning.compatibility %}
+    <section class="choice-warning" role="alert" aria-labelledby="choice-warning-title">
+      <h2 id="choice-warning-title">Ce dessin ne correspond pas complètement au profil « {{ warning.name }} ».</h2>
+      {% if poor.uncovered_layers %}
+      <p>{{ poor.uncovered_layers|length }} calque(s) avec des contours ne sont pas couverts par le profil :</p>
+      <ul class="choice-layers">
+        {% for name, count in poor.uncovered_layers.items() %}{% if loop.index <= 12 %}<li><span class="wrap-anywhere">{{ name }}</span> <small>· {{ count }} contour(s)</small></li>{% endif %}{% endfor %}
+        {% if poor.uncovered_layers|length > 12 %}<li>et {{ poor.uncovered_layers|length - 12 }} autre(s)</li>{% endif %}
+      </ul>
+      {% endif %}
+      {{ facts(poor.reasons|selectattr("tone", "equalto", "warning")|rejectattr("key", "equalto", "uncovered")|list) }}
+      {% if poor.fallback_zones %}<p><strong>{{ poor.fallback_zones }} zone(s)</strong> risquent de nécessiter le mode automatique.</p>{% endif %}
+      <div class="choice-warning-actions">
+        <form action="/analyses/{{ analysis.id }}/profil" method="post" data-busy-form>
+          <input type="hidden" name="profile" value="{{ checked }}">
+          <input type="hidden" name="confirm" value="1">
+          <button type="submit" data-busy-label="Analyse en cours…">Continuer avec ce profil</button>
+        </form>
+        <a class="secondary" href="#choice-list">Choisir un autre profil</a>
+        <a class="secondary" href="/profils/nouveau?analyse={{ analysis.id }}&amp;parcours=1">Créer un profil depuis ce plan</a>
+      </div>
+    </section>
+    {% endif %}
+
+    {% set compact = checked and not warning and not error %}
+    <form id="choice-form" action="/analyses/{{ analysis.id }}/profil" method="post" class="choice-form" data-busy-form>
+      <fieldset id="choice-list" class="choice-list" tabindex="-1">
+        <legend class="visually-hidden">Profil de dessin</legend>
+        {% if compact %}
+          {% for option in options if option.id == checked %}{{ profile_card(option) }}{% endfor %}
+          {% if checked == "legacy" %}{{ legacy_card() }}{% endif %}
+          <details class="choice-more">
+            <summary>Changer de profil</summary>
+            <div class="choice-more-list">
+              {% for option in options if option.id != checked %}{{ profile_card(option) }}{% endfor %}
+              {% if checked != "legacy" %}{{ legacy_card() }}{% endif %}
+            </div>
+          </details>
+        {% else %}
+          {% for option in options %}{{ profile_card(option) }}{% endfor %}
+          {{ legacy_card() }}
+        {% endif %}
+      </fieldset>
+      <div class="choice-actions">
+        <button type="submit" data-busy-label="Analyse en cours…">Analyser le plan</button>
+        <a href="/profils/nouveau?analyse={{ analysis.id }}&amp;parcours=1">Créer un nouveau profil à partir de ce plan…</a>
+      </div>
+    </form>
+  </section>
+
+  <footer class="app-footer">Modifier une charte concerne tous les futurs dossiers : elle se gère dans <a href="/profils">Profils de dessin</a>, jamais depuis un plan en cours.</footer>
+</main>
+</body>
+</html>

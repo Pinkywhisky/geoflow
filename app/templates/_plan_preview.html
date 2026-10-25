@@ -1,0 +1,28 @@
+{% macro plan_svg(preview, label, class_name="") %}
+<svg
+  class="plan-svg {{ class_name }}"
+  viewBox="{{ preview.view_box }}"
+  role="img"
+  aria-label="{{ label }}"
+  preserveAspectRatio="xMidYMid meet"
+>
+  {% for shape in preview.shapes %}
+  <path class="plan-shape {{ shape.class }}" d="{{ shape.d }}" vector-effect="non-scaling-stroke"><title>{{ shape.title }}</title></path>
+  {% endfor %}
+  {% for item in preview.labels %}
+  {% if item.href %}<a href="{{ item.href }}" class="plan-label-link">{% endif %}
+  <text class="plan-label {{ item.class }}" x="{{ item.x }}" y="{{ item.y }}" font-size="{{ preview.font_size }}" text-anchor="middle" dominant-baseline="central">{{ item.text }}</text>
+  {% if item.href %}</a>{% endif %}
+  {% endfor %}
+</svg>
+{% endmacro %}
+
+{% macro plan_legend() %}
+<ul class="plan-legend" aria-label="Légende de l’aperçu">
+  <li><span class="swatch is-ok" aria-hidden="true"></span>Vérifié ou confirmé</li>
+  <li><span class="swatch is-review" aria-hidden="true"></span>À confirmer</li>
+  <li><span class="swatch is-conflict" aria-hidden="true"></span>Contradictoire</li>
+  <li><span class="swatch is-context" aria-hidden="true"></span>Autre contour</li>
+  <li><span class="swatch is-excluded" aria-hidden="true"></span>Exclu techniquement</li>
+</ul>
+{% endmacro %}

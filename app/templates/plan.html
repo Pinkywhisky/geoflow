@@ -1,11 +1,8 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Plan — {{ dossier.reference }} — GeoFlow</title>
-  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
-  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+  {% set page_title %}Plan — {{ dossier.reference }} — GeoFlow{% endset %}
+  {% include "_head.html" %}
 </head>
 <body>
 <main class="shell wide-shell">
@@ -42,12 +39,13 @@
       method="post"
       enctype="multipart/form-data"
       class="upload-form"
+      data-busy-form
       {% if dossier.plan_importe %}data-confirm="Réimporter ce plan remplacera l’analyse actuelle et les associations existantes."{% endif %}
     >
-      <label for="plan-file">Fichier .dxf ou .dwg</label>
+      <label for="plan-file">{% if dossier.plan_importe %}Remplacer par un autre fichier .dxf ou .dwg{% else %}Fichier .dxf ou .dwg{% endif %}</label>
       <div class="upload-row">
         <input id="plan-file" name="file" type="file" accept=".dxf,.dwg" required data-file-input>
-        <button type="submit">{% if dossier.plan_importe %}Réimporter le plan{% else %}Importer et analyser{% endif %}</button>
+        <button type="submit" data-busy-label="Analyse en cours…" {% if dossier.plan_importe %}class="secondary"{% endif %}>{% if dossier.plan_importe %}Réimporter le plan{% else %}Importer et analyser{% endif %}</button>
       </div>
       <small data-file-name>Aucun fichier sélectionné</small>
     </form>
@@ -58,7 +56,10 @@
     {% if dossier.plan_importe %}
     <a href="/dossiers/{{ dossier.id }}/controle">Suivant</a>
     {% else %}
-    <button type="button" disabled>Suivant</button>
+    <span class="next-hint">
+      <small>Importez un plan pour continuer</small>
+      <button type="button" disabled>Suivant</button>
+    </span>
     {% endif %}
   </footer>
 </main>

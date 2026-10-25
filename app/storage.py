@@ -6,6 +6,9 @@ import os
 import re
 import shutil
 import tempfile
+import threading
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.domain import Dossier
@@ -21,6 +24,20 @@ class DossierNotFoundError(KeyError):
 class JsonDossierRepository:
     def __init__(self, root: str | Path) -> None:
         self.root = Path(root)
+        self._locks: dict[str, threading.Lock] = {}
+        self._locks_guard = threading.Lock()
+
+    @contextmanager
+    def lock(self, dossier_id: str):
+        """Serialize read-modify-write cycles of one dossier across threads.
+
+        Hold it only around synchronous code: never across an ``await``.
+        """
+
+        with self._locks_guard:
+            lock = self._locks.setdefault(dossier_id, threading.Lock())
+        with lock:
+            yield
 
     def _path(self, dossier_id: str) -> Path:
         if not _SAFE_ID.fullmatch(dossier_id):
@@ -58,15 +75,46 @@ class JsonDossierRepository:
             raise DossierNotFoundError(dossier_id) from exc
 
     def list(self) -> list[Dossier]:
+        """Dossiers ordered from the most recently saved to the oldest."""
         if not self.root.exists():
             return []
         dossiers: list[Dossier] = []
-        for path in sorted(self.root.glob("*.json"), reverse=True):
+        def saved_at(path: Path) -> tuple[float, str]:
+            try:
+                return path.stat().st_mtime, path.name
+            except OSError:
+                return 0.0, path.name
+
+        paths = sorted(self.root.glob("*.json"), key=saved_at, reverse=True)
+        for path in paths:
             try:
                 dossiers.append(Dossier.model_validate_json(path.read_text(encoding="utf-8")))
             except (OSError, ValueError):
                 continue
         return dossiers
+
+    def find_by_reference(
+        self, reference: str, exclude_id: str | None = None
+    ) -> Dossier | None:
+        """Another dossier already using this business reference, if any.
+
+        References are unique regardless of case and spacing, so that the
+        resume list never shows two indistinguishable dossiers.
+        """
+        wanted = " ".join(reference.split()).casefold()
+        for dossier in self.list():
+            if dossier.id == exclude_id:
+                continue
+            if " ".join(dossier.reference.split()).casefold() == wanted:
+                return dossier
+        return None
+
+    def modified_at(self, dossier_id: str) -> datetime | None:
+        try:
+            timestamp = self._path(dossier_id).stat().st_mtime
+        except (DossierNotFoundError, OSError):
+            return None
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc)
 
     def delete(self, dossier_id: str) -> None:
         """Delete one validated dossier path and its generated artifacts."""

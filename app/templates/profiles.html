@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  {% set page_title %}Profils de dessin — GeoFlow{% endset %}
+  {% include "_head.html" %}
+</head>
+<body>
+<main class="shell home-shell">
+  <header class="app-bar">
+    <a class="app-brand" href="/" aria-label="Accueil GeoFlow">
+      <span class="mark" aria-hidden="true">G</span>
+      <span><strong>GeoFlow</strong><small>Profils de dessin</small></span>
+    </a>
+    <span class="app-bar-actions">
+      <a class="secondary" href="/">Accueil</a>
+      {% include "_theme_toggle.html" %}
+    </span>
+  </header>
+
+  {% if message %}<div class="{% if notice %}notice{% else %}alert{% endif %}" role="status">{{ message }}</div>{% endif %}
+
+  <section class="start" aria-labelledby="profile-start-title">
+    <h1 id="profile-start-title">Expliquer votre charte de dessin à GeoFlow</h1>
+    <p class="profile-intro">Un profil indique où GeoFlow doit lire chaque information de vos plans et quelle source fait foi. Il se crée une fois, puis se choisit à chaque dépôt de plan depuis l’accueil. Le modifier concerne les futurs dossiers ; les dossiers déjà analysés gardent les règles de leur analyse.</p>
+    <form action="/profils/analyse" method="post" enctype="multipart/form-data" class="drop-form" data-drop-form data-busy-form>
+      <label class="dropzone" for="profile-drop" data-dropzone>
+        <svg class="dropzone-icon" viewBox="0 0 24 24" width="36" height="36" aria-hidden="true" focusable="false"><path d="M12 15V4m0 0-4 4m4-4 4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="dropzone-title" data-drop-title><span class="pointer-fine">Créer un profil depuis un plan</span><span class="pointer-coarse">Choisir un plan DXF ou DWG</span></span>
+        <span class="dropzone-sub" data-file-name><span class="pointer-fine">Déposez un DWG ou DXF, ou <u>parcourez vos fichiers</u> · </span>50 Mo maximum</span>
+        <input id="profile-drop" name="file" type="file" accept=".dxf,.dwg" required data-file-input>
+      </label>
+      <button type="submit" class="drop-submit" data-busy-label="Analyse en cours…">Analyser le plan</button>
+    </form>
+  </section>
+
+  <section class="dossiers" aria-labelledby="profiles-title">
+    <div class="dossiers-head">
+      <h2 id="profiles-title">Profils{% if profiles %} <span class="count">{{ profiles|length }}</span>{% endif %}</h2>
+    </div>
+    {% if unreadable %}<p class="warning">{{ unreadable }} fichier(s) de profil illisible(s) ont été ignorés.</p>{% endif %}
+    {% if profiles %}
+    <ul class="dossier-items">
+      {% for item in profiles %}
+      {% set status = item.last_check.status if item.last_check else None %}
+      <li class="dossier-item profile-item">
+        <a class="dossier-link profile-link" href="/profils/{{ item.id }}">
+          <span class="dossier-name">
+            <strong>{{ item.name }}</strong>
+            <small>Version {{ item.revision }} · modifié {{ modified[item.id] }}</small>
+          </span>
+          <span class="profile-pills">
+            {% if item.id == default_id %}<span class="status-pill ok">Par défaut</span>{% endif %}
+            <span class="status-pill {% if status == 'complet' %}ok{% elif status == 'avertissements' %}warning{% elif status == 'incomplet' %}blocked{% else %}neutral{% endif %}">{{ status_labels[status] if status else "Non vérifié" }}</span>
+          </span>
+          <span class="dossier-go" aria-hidden="true">→</span>
+        </a>
+        <div class="profile-actions">
+          {% if item.id == default_id %}
+          <form action="/profils/defaut/retirer" method="post" class="profile-default-form">
+            <button type="submit" class="text-button" aria-label="Ne plus utiliser {{ item.name }} par défaut">Retirer par défaut</button>
+          </form>
+          {% else %}
+          <form action="/profils/{{ item.id }}/defaut" method="post" class="profile-default-form">
+            <button type="submit" class="text-button" aria-label="Utiliser {{ item.name }} par défaut">Par défaut</button>
+          </form>
+          {% endif %}
+          <form action="/profils/{{ item.id }}/dupliquer" method="post">
+            <button type="submit" class="text-button" aria-label="Dupliquer le profil {{ item.name }}">Dupliquer</button>
+          </form>
+          <form action="/profils/{{ item.id }}/supprimer" method="post" data-confirm="Supprimer définitivement le profil « {{ item.name }} » ?">
+            <button type="submit" class="text-button danger-text" aria-label="Supprimer le profil {{ item.name }}">Supprimer</button>
+          </form>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty-inline">Aucun profil pour l’instant. Sans profil, GeoFlow continue d’analyser vos plans avec ses règles actuelles.</p>
+    {% endif %}
+  </section>
+
+  <footer class="app-footer">Le profil ne contient que des règles : aucune géométrie ni annotation de vos plans n’y est enregistrée.</footer>
+</main>
+</body>
+</html>

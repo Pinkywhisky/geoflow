@@ -37,7 +37,8 @@ def test_upload_valid_dxf() -> None:
     assert response.status_code == 200
     assert "Analyse terminée" in response.text
     assert "Contours analysés" in response.text
-    assert "Créer un dossier à partir de cette analyse" in response.text
+    assert "Créer le dossier" in response.text
+    assert 'name="reference"' in response.text
 
 
 def test_upload_wrong_extension() -> None:

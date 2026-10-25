@@ -1,78 +1,112 @@
 <!doctype html>
 <html lang="fr">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>GeoFlow — Dossiers de copropriété</title>
-  <link rel="stylesheet" href="{{ url_for("static", path="/style.css") }}">
-  <script src="{{ url_for("static", path="/app.js") }}" defer></script>
+  {% set page_title %}GeoFlow — Dossiers de copropriété{% endset %}
+  {% include "_head.html" %}
 </head>
-<body>
-<main class="shell">
-  <header class="brand"><span class="mark">G</span><div><h1>GeoFlow</h1><p>MVP v0.4.3 · Assistant copropriété</p></div></header>
+<body class="home">
+<main class="shell home-shell">
+  <header class="app-bar">
+    <a class="app-brand" href="/" aria-label="Accueil GeoFlow">
+      <span class="mark" aria-hidden="true">G</span>
+      <span><strong>GeoFlow</strong><small>Mise en copropriété</small></span>
+    </a>
+    <span class="app-bar-actions">
+      <a class="text-link" href="/profils">Profils de dessin</a>
+      {% include "_theme_toggle.html" %}
+    </span>
+  </header>
+
   {% if message %}<div class="{% if request.query_params.get("deleted") == "1" or request.query_params.get("analysis_deleted") == "1" %}notice{% else %}alert{% endif %}" role="status">{{ message }}</div>{% endif %}
 
-  <section class="panel hero">
-    <div>
-      <p class="eyebrow">Nouveau dossier</p>
-      <h2>Démarrer une étude de copropriété</h2>
-      <p class="muted">GeoFlow détecte, vous corrigez si nécessaire, puis l’assistant enregistre et vous guide jusqu’au document.</p>
-    </div>
-    <form action="/dossiers" method="post" class="form-grid">
-      <label>Référence du dossier
-        <input name="reference" required maxlength="120" placeholder="Ex. DEMO-2026">
+  <section class="start" aria-labelledby="start-title">
+    <h1 id="start-title">Démarrer avec un plan</h1>
+    <form action="/analyze" method="post" enctype="multipart/form-data" class="drop-form" data-drop-form data-busy-form>
+      <label class="dropzone" for="plan-drop" data-dropzone>
+        <svg class="dropzone-icon" viewBox="0 0 24 24" width="36" height="36" aria-hidden="true" focusable="false"><path d="M12 15V4m0 0-4 4m4-4 4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="dropzone-title" data-drop-title><span class="pointer-fine">Déposez un plan DXF ou DWG</span><span class="pointer-coarse">Choisir un plan DXF ou DWG</span></span>
+        <span class="dropzone-sub" data-file-name><span class="pointer-fine">ou <u>parcourez vos fichiers</u> · </span>50 Mo maximum</span>
+        <input id="plan-drop" name="file" type="file" accept=".dxf,.dwg" required data-file-input aria-describedby="drop-help">
       </label>
-      <fieldset>
-        <legend>Type de dossier</legend>
-        <label class="choice"><input type="radio" name="dossier_type" value="copropriete" checked> Copropriété</label>
-        <label class="choice disabled"><input type="radio" disabled> Hors copropriété <span class="badge">Bientôt disponible</span></label>
-      </fieldset>
-      <button type="submit">Créer le dossier</button>
+      <p id="drop-help" class="drop-help">
+        <strong>Pré-diagnostic autonome</strong> · lots probables et points à vérifier en quelques secondes.
+        Rien n’est conservé sans votre accord.
+      </p>
+      <button type="submit" class="drop-submit" data-busy-label="Analyse en cours…">Obtenir le diagnostic</button>
     </form>
+
+    <details class="blank-dossier"{% if blank_form_error %} open{% endif %}>
+      <summary>Créer un dossier sans plan</summary>
+      <form action="/dossiers" method="post" class="blank-dossier-form">
+        <input type="hidden" name="dossier_type" value="copropriete">
+        <label for="dossier-reference" class="visually-hidden">Référence du dossier</label>
+        <input id="dossier-reference" name="reference" required maxlength="120" placeholder="Référence, ex. DEMO-2026" autocomplete="off">
+        <button type="submit" class="secondary">Créer le dossier</button>
+      </form>
+    </details>
   </section>
 
-  {% if dossiers %}
-  <section class="panel">
-    <p class="eyebrow">Dossiers locaux</p>
-    <div class="dossier-list">
+  <section class="dossiers" aria-labelledby="dossiers-title">
+    <div class="dossiers-head">
+      <h2 id="dossiers-title">Dossiers{% if dossiers %} <span class="count">{{ dossiers|length }}</span>{% endif %}</h2>
+      {% if dossiers|length > 4 %}
+      <label class="dossier-search">
+        <span class="visually-hidden">Rechercher un dossier</span>
+        <input type="search" placeholder="Rechercher…" data-dossier-search autocomplete="off">
+      </label>
+      {% endif %}
+    </div>
+
+    {% if dossiers %}
+    <ul class="dossier-items" data-dossier-list>
       {% for item in dossiers %}
-      <div class="dossier-row">
-        <a href="/dossiers/{{ item.id }}/plan">
-          <strong>{{ item.reference }}</strong>
-          <span>Copropriété · {% if item.statut_validation_donnees.value == "valide" %}Validé{% elif item.statut_validation_donnees.value == "a_valider" %}À valider{% else %}Brouillon{% endif %}</span>
+      {% set info = progress[item.id] %}
+      {% set status = item.statut_validation_donnees.value %}
+      <li class="dossier-item" data-search="{{ item.reference }} {{ item.plan_importe.nom_fichier_original if item.plan_importe else '' }}">
+        <a class="dossier-link" href="{{ info.href }}">
+          <span class="dossier-name">
+            <strong>{{ item.reference }}</strong>
+            <small>{% if item.plan_importe %}{{ item.plan_importe.nom_fichier_original }}{% else %}Aucun plan{% endif %}{% if info.modified %} · modifié {{ info.modified }}{% endif %}</small>
+          </span>
+          <span class="dossier-progress">
+            <span class="progress-track" aria-hidden="true">
+              {% for step in info.steps %}<span class="progress-seg is-{{ step.state }}" title="{{ step.label }}"></span>{% endfor %}
+            </span>
+            <small>
+              {% if status == "valide" and info.step_id == "document" %}Prêt pour le document{% else %}<span class="visually-hidden">Étape </span>{{ info.step_number }}/{{ info.step_count }} · {{ info.step_label }}{% endif %}
+              {% if info.pending %}<span class="pending">· {{ info.pending }} à traiter</span>{% endif %}
+            </small>
+          </span>
+          <span class="status-pill {% if status == "valide" %}ok{% elif status == "a_valider" %}warning{% else %}neutral{% endif %}">{% if status == "valide" %}Validé{% elif status == "a_valider" %}À valider{% else %}Brouillon{% endif %}</span>
+          <span class="dossier-go" aria-hidden="true">→</span>
         </a>
         <form action="/dossiers/{{ item.id }}/delete" method="post" data-delete-form data-reference="{{ item.reference }}">
           <button
             type="button"
-            class="trash-button"
+            class="ghost-icon"
             data-delete-button
             aria-label="Supprimer le dossier {{ item.reference }}"
             title="Supprimer le dossier"
           >
-            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
               <path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
           </button>
         </form>
-      </div>
+      </li>
       {% endfor %}
-    </div>
+    </ul>
+    <p class="empty-inline" data-dossier-empty hidden>Aucun dossier ne correspond à cette recherche.</p>
+    {% else %}
+    <ol class="onboarding">
+      <li><strong>Déposez un plan</strong><span>GeoFlow détecte l’unité, les planches et les lots probables.</span></li>
+      <li><strong>Vérifiez</strong><span>Confirmez les lots ambigus, complétez l’adresse et les millièmes.</span></li>
+      <li><strong>Générez</strong><span>Obtenez un premier brouillon Word à partir des données validées.</span></li>
+    </ol>
+    {% endif %}
   </section>
-  {% endif %}
 
-  <section class="panel quick-analysis-entry">
-    <p class="eyebrow">Pré-diagnostic autonome</p>
-    <h2>Analyse rapide</h2>
-    <p class="muted">Déposez un fichier DWG ou DXF pour obtenir immédiatement ce que GeoFlow comprend du plan, les lots probables et les points à vérifier.</p>
-    <form action="/analyze" method="post" enctype="multipart/form-data" class="inline-form">
-      <label>Fichier DXF ou DWG
-        <input name="file" type="file" accept=".dxf,.dwg" required data-file-input>
-        <small data-file-name>Aucun fichier sélectionné</small>
-      </label>
-      <button type="submit">Obtenir le diagnostic</button>
-    </form>
-    <p class="hint">Taille maximale : 50 Mo. Un DWG nécessite ODA File Converter.</p>
-  </section>
+  <footer class="app-footer">GeoFlow MVP v0.4.3 · Données conservées localement</footer>
 </main>
 </body>
 </html>

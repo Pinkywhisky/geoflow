@@ -30,7 +30,8 @@ from app.domain import (
     ReconciliationResult,
     VerificationStatus,
 )
-from app.domain.models import BBox, CandidateZone, Planche, StatutRevue, TexteDxf
+from app.domain.models import CandidateZone, Planche, StatutRevue, TexteDxf, Zone
+from app.dxf.technical import model_subregion
 
 
 logger = logging.getLogger(__name__)
@@ -183,31 +184,326 @@ class _Occurrence:
     evidence_ids: list[str]
 
 
-def _bbox_area(bbox: BBox) -> float:
-    return max(0.0, bbox.max_x - bbox.min_x) * max(0.0, bbox.max_y - bbox.min_y)
+def _same_outline(
+    first: CandidateZone, second: CandidateZone, dx: float, dy: float, tolerance: float
+) -> bool:
+    """Same closed outline, bulges included, once moved by (dx, dy)."""
+
+    source = first.sommets
+    target = second.sommets
+    count = len(source)
+    if count < 3 or count != len(target):
+        return False
+    for shift in range(count):
+        if all(
+            abs(source[index].x + dx - target[(index + shift) % count].x) <= tolerance
+            and abs(source[index].y + dy - target[(index + shift) % count].y) <= tolerance
+            and abs(source[index].bulge - target[(index + shift) % count].bulge) <= 1e-9
+            for index in range(count)
+        ):
+            return True
+    return False
 
 
-def _point_in_bbox(x: float, y: float, bbox: BBox) -> bool:
-    return bbox.min_x <= x <= bbox.max_x and bbox.min_y <= y <= bbox.max_y
+def _is_translated_copy(first: list[CandidateZone], second: list[CandidateZone]) -> bool:
+    """True when ``second`` is ``first`` moved as a whole by one translation.
+
+    Every contour must find a distinct partner with the same vertices and
+    bulges under that single translation: equal areas, a shared lot number or
+    proximity alone never qualify.
+    """
+
+    if not first or len(first) != len(second):
+        return False
+    if any(item.bbox is None or len(item.sommets) < 3 for item in [*first, *second]):
+        return False
+    extent = max(
+        max(item.bbox.max_x - item.bbox.min_x, item.bbox.max_y - item.bbox.min_y)
+        for item in [*first, *second]
+    )
+    tolerance = 1e-6 * max(1.0, extent)
+    anchor = first[0]
+    for partner in second:
+        dx = partner.bbox.min_x - anchor.bbox.min_x
+        dy = partner.bbox.min_y - anchor.bbox.min_y
+        remaining = list(second)
+        for item in first:
+            match = next(
+                (
+                    candidate
+                    for candidate in remaining
+                    if _same_outline(item, candidate, dx, dy, tolerance)
+                ),
+                None,
+            )
+            if match is None:
+                break
+            remaining.remove(match)
+        else:
+            return True
+    return False
+
+
+REPRESENTATION_DUPLICATE = "representation_dupliquee"
+REPRESENTATION_UNANNOTATED = "representation_sans_surface"
+
+
+def _split_representations(
+    dossier: Dossier,
+    grouped: list["_Occurrence"],
+    principal_candidates: dict[str, CandidateZone],
+    rules: "ReconciliationRules",
+) -> tuple[list["_Occurrence"], list[tuple["_Occurrence", str, "_Occurrence | None"]]]:
+    """Occurrences of one lot number that add up, and those set aside.
+
+    Two rules prevent counting a lot twice, both conservative:
+
+    * an occurrence that is an exact translated copy of an occurrence kept on
+      another planche, with the same annotated surface, is a duplicated
+      representation (e.g. a model drawing pasted in a layout);
+    * once at least one occurrence carries its own surface annotation,
+      occurrences without any annotation are other representations of the
+      lot (earlier versions, drafts) and are not added to it.
+
+    Copies on the same planche are never merged: they may be two levels.
+    """
+
+    def preference(item: "_Occurrence") -> tuple[object, ...]:
+        return (
+            _planche_status(dossier, item.anchor.planche_id) != StatutRevue.RETENUE,
+            item.annotated_surface_m2 is None,
+            f"preuve-titre-{item.anchor.occurrence_id}" not in item.evidence_ids,
+            item.anchor.occurrence_id,
+        )
+
+    def contours(item: "_Occurrence") -> list[CandidateZone]:
+        return [principal_candidates[cid] for cid in item.candidate_ids if cid in principal_candidates]
+
+    counted: list[_Occurrence] = []
+    set_aside: list[tuple[_Occurrence, str, _Occurrence | None]] = []
+    for item in sorted(grouped, key=preference):
+        original = next(
+            (
+                kept
+                for kept in counted
+                if kept.anchor.planche_id != item.anchor.planche_id
+                and (
+                    (kept.annotated_surface_m2 is None and item.annotated_surface_m2 is None)
+                    or (
+                        kept.annotated_surface_m2 is not None
+                        and item.annotated_surface_m2 is not None
+                        and rules.tolerance.accepts(kept.annotated_surface_m2, item.annotated_surface_m2)
+                    )
+                )
+                and _is_translated_copy(contours(kept), contours(item))
+            ),
+            None,
+        )
+        if original is not None:
+            set_aside.append((item, REPRESENTATION_DUPLICATE, original))
+        else:
+            counted.append(item)
+
+    if any(item.annotated_surface_m2 is not None for item in counted):
+        unannotated = [item for item in counted if item.annotated_surface_m2 is None]
+        counted = [item for item in counted if item.annotated_surface_m2 is not None]
+        set_aside.extend((item, REPRESENTATION_UNANNOTATED, None) for item in unannotated)
+    counted.sort(key=lambda item: item.anchor.occurrence_id)
+    set_aside.sort(key=lambda entry: entry[0].anchor.occurrence_id)
+    return counted, set_aside
+
+
+def _bbox_gap(first: CandidateZone, second: CandidateZone) -> float:
+    a, b = first.bbox, second.bbox
+    dx = max(0.0, max(a.min_x, b.min_x) - min(a.max_x, b.max_x))
+    dy = max(0.0, max(a.min_y, b.min_y) - min(a.max_y, b.max_y))
+    return math.hypot(dx, dy)
+
+
+def _single_contact(
+    annex: CandidateZone, numbers: list[str], contours_by_number: dict[str, list[CandidateZone]]
+) -> tuple[str, float] | None:
+    """The only nearby lot whose principal contours touch the annex.
+
+    Touching means bounding boxes meet within a tiny tolerance; every other
+    candidate lot must stay clearly apart (a quarter of the annex size, at
+    least half a unit), otherwise the annex remains ambiguous.
+    """
+
+    if annex.bbox is None:
+        return None
+    size = math.hypot(annex.bbox.max_x - annex.bbox.min_x, annex.bbox.max_y - annex.bbox.min_y)
+    contact = 1e-3 * max(1.0, size)
+    clearance = max(0.5, 0.25 * size)
+    gaps = {
+        number: min(
+            (_bbox_gap(annex, contour) for contour in contours_by_number.get(number, []) if contour.bbox),
+            default=math.inf,
+        )
+        for number in numbers
+    }
+    touching = [number for number, value in gaps.items() if value <= contact]
+    if len(touching) != 1:
+        return None
+    others = [value for number, value in gaps.items() if number != touching[0]]
+    if any(value < clearance for value in others):
+        return None
+    return touching[0], min(others, default=math.inf)
+
+
+def _annex_attachment(
+    item: BusinessZoneCandidate,
+    candidate: CandidateZone | None,
+    zone: Zone | None,
+    dossier: Dossier,
+    anchor_index: "_SpatialIndex[_LotAnchor]",
+    counted_occurrence_ids: set[str],
+    contours_by_number: dict[str, list[CandidateZone]],
+    evidence: dict[str, Evidence],
+    rules: "ReconciliationRules",
+) -> BusinessZoneCandidate:
+    """Attachment state of an annex: confirmed zone, suggestion or nothing.
+
+    A lot is suggested only when exactly one lot number of a counted
+    representation lies within the assignment radius on the same planche,
+    or, among several, when the annex touches the contours of exactly one of
+    them and stays clear of the others. The suggestion always waits for the
+    user: it never creates a zone.
+    """
+
+    if zone is not None and zone.lot_id is not None:
+        lot = next((lot for lot in dossier.lots if lot.id == zone.lot_id), None)
+        return item.model_copy(
+            update={
+                "statut": VerificationStatus.CONFIRME_MANUEL,
+                "numero_lot_propose": lot.numero if lot else None,
+                "motif": "Annexe rattachée par l’utilisateur.",
+            }
+        )
+    center = _candidate_center(candidate) if candidate is not None else None
+    if center is None:
+        return item
+    nearby = [
+        (distance, point.value)
+        for distance, point in anchor_index.query(
+            candidate.planche_region, center[0], center[1], rules.lot_assignment_radius
+        )
+        if point.value.occurrence_id in counted_occurrence_ids
+    ]
+    numbers = sorted({anchor.numero for _, anchor in nearby}, key=lambda value: (len(value), value))
+    if len(numbers) == 1:
+        distance, anchor = min(nearby, key=lambda entry: entry[0])
+        evidence_id = _add_evidence(
+            evidence,
+            Evidence(
+                id=f"preuve-annexe-lot-{item.candidate_zone_id}",
+                polarite=EvidencePolarity.POSITIVE,
+                source="numero_lot_proche_annexe",
+                valeur=anchor.numero,
+                fiabilite=EvidenceReliability.MOYENNE,
+                description=(
+                    f"Seul repère de lot à moins de {rules.lot_assignment_radius:g} unités "
+                    "sur la même planche."
+                ),
+                distance=distance,
+                candidate_zone_ids=[item.candidate_zone_id],
+                provenance=_text_provenance(anchor.text, dossier),
+            ),
+        )
+        return item.model_copy(
+            update={
+                "statut": VerificationStatus.A_CONFIRMER,
+                "numero_lot_propose": anchor.numero,
+                "evidence_ids": [*item.evidence_ids, evidence_id],
+                "motif": f"Lot {anchor.numero} proposé, à confirmer.",
+            }
+        )
+    contact = _single_contact(candidate, numbers, contours_by_number) if len(numbers) > 1 else None
+    if contact is not None:
+        number, clearance = contact
+        evidence_id = _add_evidence(
+            evidence,
+            Evidence(
+                id=f"preuve-annexe-contact-{item.candidate_zone_id}",
+                polarite=EvidencePolarity.POSITIVE,
+                source="contact_contour_lot",
+                valeur=number,
+                fiabilite=EvidenceReliability.MOYENNE,
+                description=(
+                    f"L’annexe touche un contour du lot {number} ; les autres lots proches "
+                    f"({', '.join(value for value in numbers if value != number)}) en sont "
+                    f"séparés d’au moins {clearance:.2f} unités."
+                ),
+                candidate_zone_ids=[item.candidate_zone_id],
+            ),
+        )
+        return item.model_copy(
+            update={
+                "statut": VerificationStatus.A_CONFIRMER,
+                "numero_lot_propose": number,
+                "evidence_ids": [*item.evidence_ids, evidence_id],
+                "motif": f"Lot {number} proposé par contact, à confirmer.",
+            }
+        )
+    if len(numbers) > 1:
+        evidence_id = _add_evidence(
+            evidence,
+            Evidence(
+                id=f"preuve-annexe-ambigue-{item.candidate_zone_id}",
+                polarite=EvidencePolarity.NEGATIVE,
+                source="numeros_lot_concurrents",
+                valeur=", ".join(numbers),
+                fiabilite=EvidenceReliability.FORTE,
+                description="Plusieurs repères de lots différents sont à proximité : aucun n’est proposé.",
+                candidate_zone_ids=[item.candidate_zone_id],
+            ),
+        )
+        return item.model_copy(
+            update={
+                "evidence_ids": [*item.evidence_ids, evidence_id],
+                "motif": "Plusieurs lots possibles : " + ", ".join(numbers) + ".",
+            }
+        )
+    return item
+
+
+def _planche_title(dossier: Dossier, planche_id: str) -> str:
+    planche = next((item for item in dossier.planches if item.id == planche_id), None)
+    return planche.titre if planche is not None else planche_id
+
+
+def _set_aside_evidence(
+    item: "_Occurrence", reason: str, kept: "_Occurrence | None", dossier: Dossier
+) -> Evidence:
+    where = _planche_title(dossier, item.anchor.planche_id)
+    surface = f"{item.geometric_surface_m2:.2f}".replace(".", ",")
+    if reason == REPRESENTATION_DUPLICATE and kept is not None:
+        description = (
+            f"Représentation identique de {surface} m² sur « {where} », copie exacte de "
+            f"celle de « {_planche_title(dossier, kept.anchor.planche_id)} » : non additionnée."
+        )
+        reliability = EvidenceReliability.FORTE
+    else:
+        description = (
+            f"Autre représentation de {surface} m² sur « {where} », sans surface annotée : "
+            "non additionnée (version antérieure, brouillon ou autre niveau à confirmer)."
+        )
+        reliability = EvidenceReliability.MOYENNE
+    return Evidence(
+        id=f"preuve-representation-{item.anchor.occurrence_id}",
+        polarite=EvidencePolarity.NEGATIVE,
+        source=reason,
+        valeur=round(item.geometric_surface_m2, 6),
+        fiabilite=reliability,
+        description=description,
+        candidate_zone_ids=list(item.candidate_ids),
+        provenance=item.anchor.text.provenance,
+    )
 
 
 def _resolved_text_planche(text: TexteDxf, planches: list[Planche]) -> str:
-    specific = [
-        planche
-        for planche in planches
-        if planche.id != "model"
-        and planche.bbox_region is not None
-        and _point_in_bbox(text.x, text.y, planche.bbox_region)
-    ]
-    if specific:
-        return min(
-            specific,
-            key=lambda item: (
-                _bbox_area(item.bbox_region) if item.bbox_region else math.inf,
-                item.id,
-            ),
-        ).id
-    return text.planche_region
+    # Same rule as contours: paper-space extents never classify model texts.
+    return model_subregion(text.planche_region, text.x, text.y, planches)
 
 
 def _candidate_center(candidate: CandidateZone) -> tuple[float, float] | None:
@@ -241,27 +537,42 @@ def _add_evidence(store: dict[str, Evidence], evidence: Evidence) -> str:
     return evidence.id
 
 
-def _technical_exclusion_reason(
-    dossier: Dossier, candidate: CandidateZone, rules: ReconciliationRules
-) -> tuple[str, str] | None:
-    planche_status = _planche_status(dossier, candidate.planche_region)
-    if planche_status in {StatutRevue.EXCLUE, StatutRevue.ABANDONNEE}:
-        return "planche_explicitement_exclue", candidate.planche_region
-
+def _layer_info(dossier: Dossier, name: str):
     control = dossier.controle_technique
-    layer = next(
+    return next(
         (
             item
             for item in (control.calques if control is not None else [])
-            if item.nom == candidate.calque
+            if item.nom == name
         ),
         None,
     )
+
+
+def human_exclusion_reason(
+    dossier: Dossier, candidate: CandidateZone
+) -> tuple[str, str] | None:
+    """Exclusion decided on the planche or the layer, which no rule overrides."""
+
+    planche_status = _planche_status(dossier, candidate.planche_region)
+    if planche_status in {StatutRevue.EXCLUE, StatutRevue.ABANDONNEE}:
+        return "planche_explicitement_exclue", candidate.planche_region
+    layer = _layer_info(dossier, candidate.calque)
     if layer is not None and layer.statut in {
         StatutRevue.EXCLUE,
         StatutRevue.ABANDONNEE,
     }:
         return "calque_explicitement_exclu", candidate.calque
+    return None
+
+
+def _technical_exclusion_reason(
+    dossier: Dossier, candidate: CandidateZone, rules: ReconciliationRules
+) -> tuple[str, str] | None:
+    human = human_exclusion_reason(dossier, candidate)
+    if human is not None:
+        return human
+    layer = _layer_info(dossier, candidate.calque)
     if (
         layer is None or layer.statut != StatutRevue.RETENUE
     ) and _matches(candidate.calque, rules.excluded_layer_patterns):
@@ -432,7 +743,24 @@ def _build_global_checks(
 def reconcile_dossier(
     dossier: Dossier, rules: ReconciliationRules = DEFAULT_RULES
 ) -> ReconciliationResult:
-    """Compute and persist a deterministic reconciliation result."""
+    """Compute and persist a deterministic reconciliation result.
+
+    A dossier analysed with a drawing profile is always reconciled with the
+    rules frozen in its own snapshot, never with the stored profile.
+    """
+
+    usage = dossier.profile_usage
+    if usage is not None and usage.mode == "profil":
+        from app.reconciliation.profiled import reconcile_with_profile
+
+        return reconcile_with_profile(dossier, usage)
+    return reconcile_legacy(dossier, rules)
+
+
+def reconcile_legacy(
+    dossier: Dossier, rules: ReconciliationRules = DEFAULT_RULES
+) -> ReconciliationResult:
+    """The automatic engine: layer conventions and lot anchors of ``rules``."""
 
     control = dossier.controle_technique
     previous = dossier.reconciliation
@@ -810,6 +1138,7 @@ def reconcile_dossier(
         occurrences_by_number[occurrence.anchor.numero].append(occurrence)
 
     proposals: list[LotProposal] = []
+    counted_occurrence_ids: set[str] = set()
     status_priority = {
         VerificationStatus.CONTRADICTOIRE: 4,
         VerificationStatus.NON_RESOLU: 3,
@@ -823,24 +1152,48 @@ def reconcile_dossier(
             occurrences_by_number[number],
             key=lambda item: item.anchor.occurrence_id,
         )
+        counted, set_aside = _split_representations(
+            dossier, grouped, principal_candidates, rules
+        )
+        counted_occurrence_ids.update(item.anchor.occurrence_id for item in counted)
         automatic_status = max(
-            (item.automatic_status for item in grouped),
+            (item.automatic_status for item in counted),
             key=lambda item: status_priority[item],
         )
+        if set_aside and status_priority[automatic_status] < status_priority[
+            VerificationStatus.A_CONFIRMER
+        ]:
+            # Setting a representation aside never raises confidence.
+            automatic_status = VerificationStatus.A_CONFIRMER
         candidate_ids = sorted(
             {
                 candidate_id
-                for item in grouped
+                for item in counted
                 for candidate_id in item.candidate_ids
             }
         )
+        set_aside_ids = sorted(
+            {
+                candidate_id
+                for item, _, _ in set_aside
+                for candidate_id in item.candidate_ids
+            }
+            - set(candidate_ids)
+        )
+        set_aside_evidence = [
+            _add_evidence(
+                evidence,
+                _set_aside_evidence(item, reason, kept, dossier),
+            )
+            for item, reason, kept in set_aside
+        ]
         annotated_values = [
             item.annotated_surface_m2
-            for item in grouped
+            for item in counted
             if item.annotated_surface_m2 is not None
         ]
         geometric_surface = sum(
-            item.geometric_surface_m2 for item in grouped
+            item.geometric_surface_m2 for item in counted
         )
         annotated_surface = (
             sum(annotated_values) if annotated_values else None
@@ -854,6 +1207,7 @@ def reconcile_dossier(
                 item.anchor.occurrence_id for item in grouped
             ],
             candidate_zone_ids=candidate_ids,
+            candidate_zone_ids_ecartes=set_aside_ids,
             surface_geometrique_m2=geometric_surface,
             surface_annotee_m2=annotated_surface,
             surface_proposee_m2=(
@@ -867,9 +1221,14 @@ def reconcile_dossier(
             ),
             evidence_ids=list(
                 dict.fromkeys(
-                    evidence_id
-                    for item in grouped
-                    for evidence_id in item.evidence_ids
+                    [
+                        *(
+                            evidence_id
+                            for item in counted
+                            for evidence_id in item.evidence_ids
+                        ),
+                        *set_aside_evidence,
+                    ]
                 )
             ),
             decision_manuelle=decision,
@@ -903,6 +1262,33 @@ def reconcile_dossier(
             }
         )
         if item.candidate_zone_id in proposal_by_candidate
+        else item
+        for item in business_candidates
+    ]
+    candidate_by_id = {item.id: item for item in control.zones_candidates}
+    zone_by_candidate = {zone.id.removeprefix("validee-"): zone for zone in dossier.zones}
+    contours_by_number = {
+        proposal.numero_propose: [
+            candidate_by_id[candidate_id]
+            for candidate_id in proposal.candidate_zone_ids
+            if candidate_id in candidate_by_id
+        ]
+        for proposal in proposals
+    }
+    business_candidates = [
+        _annex_attachment(
+            item,
+            candidate_by_id.get(item.candidate_zone_id),
+            zone_by_candidate.get(item.candidate_zone_id),
+            dossier,
+            anchor_index,
+            counted_occurrence_ids,
+            contours_by_number,
+            evidence,
+            rules,
+        )
+        if item.categorie_proposee == CategorieZone.SECONDAIRE_ANNEXE
+        and item.candidate_zone_id not in proposal_by_candidate
         else item
         for item in business_candidates
     ]

@@ -25,6 +25,7 @@ from app.domain import (
     Parcelle,
     Planche,
     PlanImporte,
+    ProfileUsage,
     Provenance,
     StatutValidationDonnees,
     StatutValidationMillieme,
@@ -57,13 +58,39 @@ def _slug(value: str) -> str:
     return re.sub("[^a-zA-Z0-9]+", "-", ascii_value).strip("-").lower() or "valeur"
 
 
+REFERENCE_MAX_LENGTH = 120
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def clean_reference(value: str) -> str:
+    """Business reference as typed, minus control characters and extra spaces.
+
+    The reference is only a label: the immutable ``Dossier.id`` keys storage,
+    URLs and generated documents, so accents, slashes or dots stay untouched.
+    """
+
+    reference = _safe_label(_CONTROL_CHARACTERS.sub(" ", value), REFERENCE_MAX_LENGTH)
+    if not reference:
+        raise ValueError("La référence du dossier est obligatoire.")
+    return reference
+
+
 def create_dossier(reference: str, dossier_type: str) -> Dossier:
     if dossier_type != "copropriete":
         raise ValueError("Seuls les dossiers de copropriete sont disponibles.")
-    clean_reference = _safe_label(reference)
-    if not clean_reference:
-        raise ValueError("La reference du dossier est obligatoire.")
-    return Dossier(id=uuid4().hex, reference=clean_reference)
+    return Dossier(id=uuid4().hex, reference=clean_reference(reference))
+
+
+def rename_dossier(dossier: Dossier, reference: str) -> bool:
+    """Change the business reference; the technical id never changes."""
+
+    cleaned = clean_reference(reference)
+    if cleaned == dossier.reference:
+        return False
+    dossier.reference = cleaned
+    # The reference is printed in the DOCX and part of the validated snapshot.
+    invalidate_data_validation(dossier)
+    return True
 
 
 def _optional_label(value: str, limit: int) -> str | None:
@@ -265,7 +292,12 @@ def attach_import(
     file_type: str,
     control: ControleTechnique,
     planches: list[Planche],
+    *,
+    reconcile: bool = True,
 ) -> None:
+    """Attach an inspected plan; ``reconcile=False`` leaves the business
+    analysis for later, once the drawing profile has been chosen."""
+
     clean_filename = safe_filename(filename)
     unit_supported = meters_per_unit(control.unite_detectee) is not None
     dossier.plan_importe = PlanImporte(
@@ -297,8 +329,55 @@ def attach_import(
     else:
         dossier.validations = []
     dossier.statut = "controle_technique"
-    reconcile_dossier(dossier)
+    usage = dossier.profile_usage
+    if reconcile and usage is not None and usage.mode == "profil":
+        # A new plan in a profiled dossier keeps the dossier's own snapshot.
+        apply_profile_choice(dossier, usage)
+    elif reconcile:
+        reconcile_dossier(dossier)
     invalidate_data_validation(dossier)
+
+
+def apply_profile_choice(dossier: Dossier, usage: ProfileUsage | None) -> None:
+    """Analyse the imported plan with a profile snapshot (None: automatic).
+
+    The unit restarts from the one read in the file, so that choosing
+    another profile never inherits the unit a previous choice imposed. A
+    profile unit differing from the file is applied as a justified decision.
+    """
+
+    plan = dossier.plan_importe
+    control = dossier.controle_technique
+    if plan is None or control is None:
+        raise ValueError("Aucun plan importe.")
+    usage = usage or ProfileUsage(mode="legacy")
+    detected = plan.unite_detectee
+    dossier.validations = [item for item in dossier.validations if item.champ != "unite_du_plan"]
+    if usage.mode == "profil" and usage.rules.units.unit != detected:
+        retained = usage.rules.units.unit
+        decision = DecisionValidation(
+            champ="unite_du_plan",
+            propose=detected,
+            retenu=retained,
+            justification=f"Unité imposée par le profil de dessin « {usage.profile_name} » (v{usage.revision}).",
+        )
+    elif meters_per_unit(detected) is not None:
+        retained = detected
+        decision = DecisionValidation(champ="unite_du_plan", propose=detected, retenu=detected)
+    else:
+        retained = None
+        decision = None
+    if retained is None:
+        for candidate in control.zones_candidates:
+            candidate.surface_geometrique_m2 = None
+    else:
+        apply_confirmed_unit(control, retained)
+        dossier.validations.append(decision)
+    plan.unite_retenue = retained
+    plan.unite_confirmee = retained is not None
+    dossier.profile_usage = usage
+    dossier.reconciliation = None
+    reconcile_dossier(dossier)
 
 
 def confirm_unit(dossier: Dossier, retained_unit: str, justification: str = "") -> None:
@@ -524,7 +603,8 @@ def confirm_lot_proposal(
     selected_ids = list(dict.fromkeys(candidate_ids))
     if not selected_ids:
         raise ValueError("Sélectionnez au moins une zone pour confirmer le lot.")
-    if any(item not in proposal.candidate_zone_ids for item in selected_ids):
+    allowed_ids = {*proposal.candidate_zone_ids, *proposal.candidate_zone_ids_ecartes}
+    if any(item not in allowed_ids for item in selected_ids):
         raise ValueError("Une zone sélectionnée ne fait pas partie de la proposition.")
     clean_building = _safe_label(building_code, 60)
     clean_level = _safe_label(level_code, 60)
@@ -580,3 +660,144 @@ def confirm_lot_proposal(
     reconcile_dossier(dossier)
     dossier.statut = "en_validation"
     invalidate_data_validation(dossier)
+
+
+ANNEX_LEVEL_PLACEHOLDER = "À préciser"
+
+
+def _annex_candidate(dossier: Dossier, candidate_id: str):
+    reconciliation = dossier.reconciliation
+    if reconciliation is None:
+        raise ValueError("Aucune réconciliation n'est disponible.")
+    business = next(
+        (
+            item
+            for item in reconciliation.business_zone_candidates
+            if item.candidate_zone_id == candidate_id
+        ),
+        None,
+    )
+    if business is None or business.categorie_proposee != CategorieZone.SECONDAIRE_ANNEXE:
+        raise ValueError("Cette zone n'est pas une annexe détectée.")
+    return business
+
+
+def _remove_zone(dossier: Dossier, zone: Zone) -> None:
+    """Drop a zone and the structure entries only it was using."""
+
+    dossier.zones.remove(zone)
+    if zone.decision_surface in dossier.validations:
+        dossier.validations.remove(zone.decision_surface)
+    for lot in dossier.lots:
+        if zone.id not in lot.zone_ids:
+            continue
+        lot.zone_ids.remove(zone.id)
+        remaining = [item for item in dossier.zones if item.id in lot.zone_ids]
+        lot.niveau_ids = [
+            level for level in lot.niveau_ids if any(item.niveau_id == level for item in remaining)
+        ]
+        lot.batiment_ids = [
+            building
+            for building in lot.batiment_ids
+            if any(item.batiment_id == building for item in remaining)
+        ]
+    used_levels = {item.niveau_id for item in dossier.zones}
+    dossier.niveaux = [level for level in dossier.niveaux if level.id in used_levels]
+    control = dossier.controle_technique
+    candidate_id = zone.id.removeprefix("validee-")
+    for candidate in control.zones_candidates if control is not None else []:
+        if candidate.id == candidate_id:
+            candidate.statut = StatutRevue.CANDIDATE
+
+
+def _attach_annex(
+    dossier: Dossier, candidate_id: str, lot_id: str | None, level_code: str
+) -> bool:
+    """Apply one annex attachment; return whether the dossier changed."""
+
+    _annex_candidate(dossier, candidate_id)
+    existing = next(
+        (zone for zone in dossier.zones if zone.id == f"validee-{candidate_id}"), None
+    )
+    if existing is not None and existing.categorie != CategorieZone.SECONDAIRE_ANNEXE:
+        raise ValueError("Cette zone est déjà associée comme surface d'une autre catégorie.")
+    lot = None
+    if lot_id:
+        lot = next((item for item in dossier.lots if item.id == lot_id), None)
+        if lot is None:
+            raise ValueError("Lot inconnu : confirmez d'abord le lot dans la liste des propositions.")
+        if not lot.batiment_ids:
+            raise ValueError("Le lot ne possède encore aucun bâtiment.")
+    clean_level = _safe_label(level_code, 60) or ANNEX_LEVEL_PLACEHOLDER
+
+    if existing is not None:
+        existing_level = next(
+            (item for item in dossier.niveaux if item.id == existing.niveau_id), None
+        )
+        unchanged = (
+            lot is not None
+            and existing.lot_id == lot.id
+            and existing_level is not None
+            and existing_level.code == clean_level
+        )
+        if unchanged:
+            return False
+        _remove_zone(dossier, existing)
+    elif lot is None:
+        return False
+
+    if lot is not None:
+        building = next(item for item in dossier.batiments if item.id == lot.batiment_ids[0])
+        associate_candidate(
+            dossier=dossier,
+            candidate_id=candidate_id,
+            building_code=building.code,
+            level_code=clean_level,
+            lot_number=lot.numero,
+            category=CategorieZone.SECONDAIRE_ANNEXE.value,
+        )
+    return True
+
+
+def attach_annex(
+    dossier: Dossier,
+    candidate_id: str,
+    lot_id: str | None,
+    level_code: str = "",
+) -> bool:
+    """Attach an annex to a constituted lot, move it, or detach it.
+
+    The annex stays a canonical zone of category ``secondaire_annexe`` with
+    its own surface and provenance; it belongs to the lot's building, and its
+    level stays explicit ("À préciser" until the user knows it). Only the
+    derived reconciliation is refreshed: the plan is never read again.
+    """
+
+    changed = _attach_annex(dossier, candidate_id, lot_id, level_code)
+    if changed:
+        reconcile_dossier(dossier)
+        invalidate_data_validation(dossier)
+    return changed
+
+
+def attach_proposed_annexes(dossier: Dossier) -> int:
+    """Confirm every pending annex suggestion whose lot is constituted."""
+
+    reconciliation = dossier.reconciliation
+    if reconciliation is None:
+        raise ValueError("Aucune réconciliation n'est disponible.")
+    lot_by_number = {lot.numero: lot for lot in dossier.lots}
+    attached = 0
+    for item in reconciliation.business_zone_candidates:
+        lot = lot_by_number.get(item.numero_lot_propose or "")
+        if (
+            item.categorie_proposee == CategorieZone.SECONDAIRE_ANNEXE
+            and item.statut == VerificationStatus.A_CONFIRMER
+            and lot is not None
+            and _attach_annex(dossier, item.candidate_zone_id, lot.id, "")
+        ):
+            attached += 1
+    if attached:
+        reconcile_dossier(dossier)
+        invalidate_data_validation(dossier)
+    return attached

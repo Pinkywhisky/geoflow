@@ -1,15 +1,14 @@
 <header class="brand workflow-brand">
   <a class="mark" href="/" aria-label="Accueil GeoFlow">G</a>
   <div class="brand-copy">
-    <h1>{{ dossier.reference }}</h1>
-    <p>Copropriété · {{ workflow_status }}</p>
+    <h1 data-dossier-reference>{{ dossier.reference }}</h1>
+    <p>Copropriété · <span class="status-dot status-{{ dossier.statut_validation_donnees.value }}"></span>{{ workflow_status }}</p>
   </div>
-  <div class="save-state" data-save-status role="status" aria-live="polite">
-    <span aria-hidden="true">✓</span> Modifications enregistrées
-  </div>
+  <div class="save-state" data-save-status data-state="idle" role="status" aria-live="polite">Sauvegarde automatique</div>
   {% if dossier.plan_importe %}
   <a class="secondary export-action" href="/dossiers/{{ dossier.id }}/export">Exporter JSON</a>
   {% endif %}
+  {% include "_theme_toggle.html" %}
 </header>
 
 <nav class="steps" aria-label="Étapes du dossier">
@@ -17,15 +16,21 @@
     {% if step.href %}
     <a
       href="{{ step.href }}"
-      class="{% if step.active %}current{% elif step.completed %}done{% endif %}"
+      class="{% if step.active %}current{% elif step.completed %}done{% elif step.pending %}attention{% endif %}"
       {% if step.active %}aria-current="step"{% endif %}
     >
-      <span aria-hidden="true">{% if step.completed and not step.active %}✓{% elif step.active %}●{% else %}○{% endif %}</span>
+      <span class="step-icon" aria-hidden="true">{% if step.completed and not step.active %}✓{% endif %}</span>
       {{ step.label }}
+      {% if step.pending %}<span class="step-count" title="{{ step.pending }} point(s) à traiter">{{ step.pending }}<span class="visually-hidden"> point(s) à traiter</span></span>{% endif %}
+      {% if step.completed and not step.active %}<span class="visually-hidden">(terminée)</span>{% endif %}
     </a>
     {% else %}
-    <span class="locked" aria-disabled="true">
-      <span aria-hidden="true">🔒</span> {{ step.label }}
+    <span class="locked" aria-disabled="true" title="Terminez les étapes précédentes pour débloquer cette étape">
+      <span class="step-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="12" height="12" focusable="false"><path d="M7 11V8a5 5 0 0 1 10 0v3M5 11h14v10H5z" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"/></svg>
+      </span>
+      {{ step.label }}
+      <span class="visually-hidden">(verrouillée)</span>
     </span>
     {% endif %}
   {% endfor %}
