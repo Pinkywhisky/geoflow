@@ -1,0 +1,21 @@
+name: Anomalie
+description: Signaler un comportement reproductible avec des données synthétiques.
+title: "[Bug] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: "Ne jamais joindre publiquement un DWG client confidentiel, un autre plan client, un secret ou une donnée personnelle. Pour une vulnérabilité, lire SECURITY.md."
+  - type: input
+    id: version
+    attributes:
+      label: Version ou commit et environnement
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction sur des données synthétiques
+      description: Étapes, résultat attendu et résultat observé.
+    validations:
+      required: true

@@ -7,8 +7,10 @@ services:
       ODA_FILE_CONVERTER: /usr/bin/ODAFileConverter
       ODA_QT_PLATFORM: xcb
       ODA_USE_XVFB: "1"
+      GEOFLOW_PUBLIC_ORIGIN: ${GEOFLOW_PUBLIC_ORIGIN:-}
     ports:
-      - "8080:8000"
+      # Host-only access; authenticated external access uses cloudflared -> geoflow:8000.
+      - "127.0.0.1:8080:8000"
     volumes:
       - geoflow-data:/data
       - type: bind
@@ -21,6 +23,13 @@ services:
         read_only: true
     networks:
       - geoflow-network
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=512m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
 
   cloudflared:

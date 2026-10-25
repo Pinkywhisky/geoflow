@@ -17,7 +17,7 @@ from ezdxf.addons import odafc
 
 
 HERE = Path(__file__).resolve().parent
-DXF_PATH = HERE / "geoflow_plan_test_source.dxf"
+DXF_PATH = HERE / "tests" / "fixtures" / "geoflow_plan_test_source.dxf"
 DWG_PATH = HERE / "geoflow_plan_test.dwg"
 
 

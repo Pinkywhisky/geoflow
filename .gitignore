@@ -17,3 +17,19 @@ data/
 *mshield
 # Local Cloudflare Tunnel credential
 secrets/cloudflare_tunnel_token.txt
+
+# Local development artifacts and credentials
+.tmp/
+.ruff_cache/
+.mypy_cache/
+.coverage*
+coverage.xml
+htmlcov/
+.env
+.env.*
+.aws/
+.codex/
+.agents/
+tmp/
+secrets/*
+!secrets/.gitkeep

@@ -8,7 +8,7 @@ Le tunnel est optionnel. GeoFlow reste utilisable localement, sans compte ni tok
 docker compose up -d --build
 ```
 
-L’accès local reste disponible sur <http://localhost:8080>.
+L’accès local reste disponible sur <http://localhost:8080>, publié seulement sur `127.0.0.1`.
 
 ## 1. Créer le tunnel
 
@@ -47,6 +47,16 @@ http://geoflow:8000
 
 Ne pas utiliser `localhost:8080` : dans le conteneur du tunnel, `localhost` désigne `cloudflared` lui-même.
 
+### Origine publique et protection same-origin
+
+Avant de démarrer, définir l’origine HTTPS exacte publiée par Cloudflare, sans chemin ni slash final :
+
+```bash
+export GEOFLOW_PUBLIC_ORIGIN=https://geoflow.example.com
+```
+
+Cette valeur est publique ; elle ne contient aucun token. Elle autorise les formulaires et l’autosave derrière la terminaison TLS. Le navigateur envoie une origine HTTPS tandis que Cloudflared utilise HTTP vers `geoflow:8000`. Si cette variable est absente, les écritures HTTPS sont refusées avec HTTP 403 lorsque l’application voit une connexion HTTP. Ne pas résoudre ce refus en acceptant toutes les origines ou en faisant confiance à tous les proxies. Vérifier que Cloudflare conserve le header `Host` public et ne configure pas de remplacement par `geoflow`.
+
 ## 4. Démarrer et vérifier
 
 Démarrer GeoFlow et le tunnel :
@@ -68,6 +78,8 @@ docker compose --profile tunnel down
 Sans le profil `tunnel`, seul GeoFlow est lancé. La CI, les tests et le build de l’image GeoFlow ne dépendent donc jamais de Cloudflare.
 
 ## Protection avec Cloudflare Access
+
+GeoFlow reste sous [AGPL-3.0-only](../LICENSE) derrière un tunnel privé. Pour une version modifiée utilisée via le réseau, proposer de manière visible le code source correspondant aux utilisateurs concernés, conformément à la section 13 ; Cloudflare Access ne dispense pas de cette obligation. Les composants Cloudflare et ODA conservent leurs licences propres ; voir la [revue des composants tiers](THIRD_PARTY_LICENSES.md).
 
 Cloudflare Tunnel transporte les requêtes mais ne remplace pas une politique d’accès. Pour une exposition durable, protéger le hostname avec Cloudflare Access :
 
@@ -96,6 +108,6 @@ Le conteneur `cloudflared` :
 - accède uniquement à son fichier de token et au réseau Docker partagé ;
 - n’accède ni au volume `/data`, ni à ODA, ni aux fichiers DWG, ni aux sources GeoFlow, ni au socket Docker.
 
-Le port `8080` reste publié comme avant sur les interfaces de l’hôte afin de préserver le fonctionnement actuel sous Windows/WSL. Sur un réseau non maîtrisé, utiliser le pare-feu de l’hôte ou valider la compatibilité locale avant de restreindre ce binding à l’adresse loopback.
+Le port hôte est publié sur `127.0.0.1:8080:8000`. Le tunnel continue d’utiliser `http://geoflow:8000`, indépendamment de ce binding. Vérifier l’accès `localhost:8080` depuis Windows/WSL selon la configuration réseau locale. La configuration du tunnel étant gérée à distance, son origine effective doit aussi être contrôlée dans Cloudflare Zero Trust ; le fichier Compose ne la définit pas.
 
 La suppression ou la reconstruction du conteneur `cloudflared` ne modifie pas le volume métier `geoflow-data`.

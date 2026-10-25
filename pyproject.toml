@@ -1,0 +1,28 @@
+[tool.geoflow]
+# Application configuration only; this file does not declare a Python package.
+license = "AGPL-3.0-only"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [".tmp"]
+
+[tool.ruff.lint]
+# Progressive correctness checks without mass formatting or unused-code cleanup.
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.mypy]
+python_version = "3.12"
+# Start with the new runtime boundaries; extend to storage and routes gradually.
+files = ["app/security.py", "app/concurrency.py", "app/version.py"]
+strict = true
+follow_imports = "silent"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# Establish a measured baseline before enforcing a coverage threshold.

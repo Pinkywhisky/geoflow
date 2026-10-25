@@ -91,3 +91,16 @@ def test_documented_origin_uses_the_docker_service_name() -> None:
 
     assert "http://geoflow:8000" in documentation
     assert "docker compose --profile tunnel up -d --build" in documentation
+
+
+def test_application_is_loopback_only_and_hardened() -> None:
+    application = _compose()["services"]["geoflow"]
+    assert application["ports"] == ["127.0.0.1:8080:8000"]
+    assert application["read_only"] is True
+    assert application["cap_drop"] == ["ALL"]
+    assert application["security_opt"] == ["no-new-privileges:true"]
+    assert application["tmpfs"] == ["/tmp:rw,nosuid,nodev,size=512m,mode=1777"]
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    assert '"--workers", "1"' in dockerfile
+    for path in ("tests", "samples", "tools"):
+        assert f"COPY --chown=geoflow:geoflow {path}" not in dockerfile

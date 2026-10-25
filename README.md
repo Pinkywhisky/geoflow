@@ -1,4 +1,8 @@
-# GeoFlow — MVP v0.4.3
+# GeoFlow — MVP
+
+GeoFlow est distribué sous **GNU Affero General Public License version 3 uniquement**, identifiant SPDX **`AGPL-3.0-only`**. Le texte officiel complet figure dans [LICENSE](LICENSE).
+
+La version applicative est centralisée dans [`app/version.py`](app/version.py) et affichée dans l’interface et l’API. Les changements en préparation sont décrits dans le [changelog](CHANGELOG.md).
 
 GeoFlow fournit une première tranche verticale du workflow de mise en copropriété :
 
@@ -16,7 +20,7 @@ GeoFlow fournit une première tranche verticale du workflow de mise en copropri�
 - aperçu SVG des contours détectés, coloré selon l’état des lots, avec un zoom par proposition ;
 - thème clair ou sombre, automatique selon le système ou choisi depuis l’en-tête.
 
-## Assistant guidé v0.4.3
+## Assistant guidé
 
 Le parcours principal est organisé en six écrans cohérents :
 
@@ -146,7 +150,7 @@ Les annexes (calque 81) sont des zones métier distinctes. Elles ne dégradent p
 
 Dans l’étape Lots & surfaces, chaque annexe se rattache à un lot constitué avec sauvegarde automatique ; un rattachement crée une zone `secondaire_annexe` du lot, avec sa surface et sa provenance, sans fusion avec la surface principale. Le niveau reste « À préciser » tant qu’il n’est pas saisi. Rattacher, déplacer ou détacher une annexe invalide la validation du dossier et ne relit jamais le plan. Les écritures d’un même dossier sont sérialisées.
 
-## Données métier et avertissements v0.4.3
+## Données métier et avertissements
 
 Les champs métier éditables sont enregistrés sans recharger la page. Toute modification postérieure à la validation invalide l’empreinte métier et replace le dossier à l’état `À valider`.
 
@@ -164,7 +168,11 @@ Un brouillon reste générable lorsque des données métier sont absentes. En re
 docker compose up -d --build
 ```
 
-Ouvrir <http://localhost:8080>. Les dossiers JSON et les documents générés sont conservés dans le volume Docker `geoflow-data`. Le conteneur fonctionne avec l’utilisateur non privilégié `geoflow`.
+Ouvrir <http://localhost:8080>. Les dossiers JSON et les documents générés sont conservés dans le volume Docker `geoflow-data`. Le conteneur fonctionne avec l’utilisateur non privilégié `geoflow`. Le port est publié uniquement sur `127.0.0.1`, sans exposition directe au réseau local.
+
+La racine du conteneur est en lecture seule, toutes les capacités Linux sont abandonnées et l’acquisition de privilèges est interdite. Seuls le volume `/data` et un `/tmp` tmpfs de 512 Mio sont inscriptibles. Le cache et la configuration utilisateur ODA/Qt sont dirigés vers `/tmp`. Le tmpfs conserve la possibilité d’exécuter des fichiers pour rester compatible avec ODA ; sa taille doit être adaptée au volume réel des conversions. La compatibilité DWG de cette configuration doit être validée avec l’installation ODA cible avant activation en production.
+
+L’image contient seulement l’application et ses dépendances runtime, y compris le modèle DOCX, ainsi que le fichier `/app/LICENSE`. Le label OCI `org.opencontainers.image.licenses` indique `AGPL-3.0-only` pour GeoFlow ; les composants tiers conservent leurs licences. Les tests, fixtures, exemples et outils de développement restent hors de l’image. Les dépendances de développement sont dans `requirements-dev.txt`.
 
 Le healthcheck interroge `/health` :
 
@@ -182,7 +190,7 @@ La création du tunnel, le stockage local du token et la protection du hostname 
 
 ## Conversion DWG
 
-ODA File Converter n’est ni téléchargé ni redistribué par GeoFlow. Le `compose.yaml` monte en lecture seule l’installation WSL actuellement attendue :
+ODA File Converter reste un logiciel propriétaire externe, ni téléchargé ni redistribué par GeoFlow et non couvert par sa licence AGPL. Ses conditions d’utilisation doivent être vérifiées séparément, notamment pour un usage commercial ou hébergé ; voir les [composants tiers](docs/THIRD_PARTY_LICENSES.md). Le `compose.yaml` monte en lecture seule l’installation WSL actuellement attendue :
 
 - exécutable : `/usr/bin/ODAFileConverter` ;
 - répertoire applicatif : `/usr/bin/ODAFileConverter_27.1.0.0`.
@@ -242,23 +250,47 @@ La première heuristique de planches repose sur les layouts DXF et sur les texte
 ## Tests
 
 ```bash
-python -m pytest -q
-docker compose run --rm geoflow python -m pytest -q
+.venv/bin/python -m pip install -r requirements-dev.txt
+mkdir -p .tmp
+TMPDIR="$PWD/.tmp" .venv/bin/python -m pytest -q --basetemp=.tmp/pytest --cov --cov-report=term-missing --cov-report=xml
+.venv/bin/python -m ruff check .
+.venv/bin/python -m mypy
+git diff --check
 ```
 
-Les tests couvrent le moteur DXF, les routes HTTP, la conversion DWG isolée, l’assistant, l’autosave, la pagination, l’invalidation après modification, la suppression des dossiers, le contexte documentaire, le contenu et l’hygiène OOXML, la persistance du snapshot et la confidentialité. La v0.4.2 ajoute plus de vingt scénarios synthétiques de réconciliation ; la v0.4.3 couvre le modèle métier rétrocompatible, les parcelles multiples, l’édition des lots, les statuts de millièmes, la règle des 1000, les avertissements actionnables et les marges du DOCX. Les tests versionnés utilisent uniquement des données synthétiques. Les dossiers sous `samples/private/` restent exclus de Git et du contexte Docker.
+Les tests ne sont pas embarqués dans l’image runtime. La [documentation de contribution](CONTRIBUTING.md) décrit la QA synthétique DXF/DWG/DOCX et les dépendances optionnelles.
+
+Les tests couvrent le moteur DXF, les routes HTTP, la conversion DWG isolée, l’assistant, l’autosave, la pagination, l’invalidation après modification, la suppression des dossiers, le contexte documentaire, le contenu et l’hygiène OOXML, la persistance du snapshot et la confidentialité. La v0.4.2 ajoute plus de vingt scénarios synthétiques de réconciliation ; les tests documentaires couvrent le modèle métier rétrocompatible, les parcelles multiples, l’édition des lots, les statuts de millièmes, la règle des 1000, les avertissements actionnables et les marges du DOCX. Les tests versionnés utilisent uniquement des données synthétiques. Les dossiers sous `samples/private/` restent exclus de Git et du contexte Docker.
 
 ## Intégration continue
 
-GitHub Actions exécute les tests publics sous Python 3.12, vérifie les erreurs de whitespace Git et construit l’image Docker à chaque push ou pull request visant `main`. La CI n’installe pas ODA File Converter et n’utilise aucune donnée privée.
+GitHub Actions exécute Ruff avec des règles de correction progressives, les tests publics avec couverture des lignes et branches sous Python 3.12, vérifie les erreurs de whitespace Git et construit l’image Docker à chaque push ou pull request visant `main`. Le rapport `coverage.xml` est conservé en artefact ; aucun seuil arbitraire n’est imposé avant une première mesure CI. Un smoke test DXF/DOCX utilise l’image durcie sans dépendance de test. Dependabot surveille les dépendances Python et GitHub Actions chaque semaine. La CI n’installe pas ODA File Converter et n’utilise aucune donnée privée.
 
 Les recettes métier de référence restent réservées à la QA locale privée. Elles ne font pas partie du socle public automatisé et les éventuels XLSX associés ne constituent pas une dépendance produit.
 
-## Limites volontaires de la v0.4.3
+## Limites volontaires
 
 Le document produit reste un brouillon technique : aucune validation juridique, aucun calcul de millièmes, aucun import de grille depuis XLSX, aucune qualification automatique des droits ou servitudes, aucune table des matières automatique et aucune reproduction exhaustive d’un acte existant. Les millièmes sont uniquement repris des valeurs saisies et validées par l’utilisateur. La reconnaissance parfaite des cartouches et feuilles reste également hors périmètre.
 
 La réconciliation est déterministe et fondée sur des règles prudentes. Elle n’emploie ni apprentissage automatique, ni OCR, ni LLM, ni dépendance géométrique lourde. Les présentations DXF ambiguës ou inconnues restent à confirmer manuellement ; l’absence de proposition automatique est préférée à un faux rapprochement.
+
+## Sécurité et concurrence
+
+Toutes les routes d’écriture partagent une protection same-origin : `Origin`, ou `Referer` en son absence, doit correspondre à l’origine courante. Les écritures depuis un autre site, y compris un sous-domaine voisin, sont refusées. Les formulaires classiques, uploads et autosave ne nécessitent aucun champ supplémentaire. Les clients HTTP sans provenance navigateur restent acceptés s’ils n’envoient aucun cookie ; ce contrôle n’est pas une authentification. Voir [SECURITY.md](SECURITY.md).
+
+Pour un tunnel HTTPS, définir `GEOFLOW_PUBLIC_ORIGIN=https://votre-hostname` avant le démarrage. Cette origine doit être exacte, sans chemin ni slash final. Elle permet la terminaison TLS sans élargir la confiance aux en-têtes proxy d’un client. L’accès HTTP local reste disponible.
+
+ODA, `inspect_dxf()` et la réconciliation d’une analyse rapide ou d’un import s’exécutent dans des threads AnyIO, avec un seul traitement lourd simultané. Une seconde demande peut attendre sans occuper l’event loop ; toute demande supplémentaire reçoit HTTP 429 et `Retry-After: 5` avant la lecture du corps multipart, pour borner aussi les fichiers temporaires. `/health` reste disponible pendant une conversion. Un thread n’est pas abandonné à l’annulation de la requête, afin de conserver ses fichiers temporaires jusqu’à la fin du traitement. Une modification ou une suppression du dossier pendant l’import empêche la sauvegarde d’un résultat devenu obsolète (409 ou 404). Une analyse temporaire supprimée pendant l’application d’un profil n’est jamais recréée (404).
+
+Uvicorn démarre explicitement avec `--workers 1`. Les verrous des dossiers/profils et la limite d’analyse sont locaux au processus : ne pas augmenter le nombre de workers ni partager le volume JSON entre plusieurs instances. Ils ne constituent pas des verrous distribués ni des transactions globales. Les opérations synchrones courtes, les rendus HTML et certaines réconciliations déclenchées par une correction manuelle restent exécutés dans la route ; la réactivité sous charge CPU réelle n’a pas de garantie de latence. Une file de travaux dédiée et une base transactionnelle seraient nécessaires pour changer d’échelle.
+
+## Licence et contributions
+
+GeoFlow est sous **`AGPL-3.0-only`**, sans option « ou toute version ultérieure ». L’utilisation, la modification et la redistribution, y compris commerciales, sont permises sous les conditions de l’[AGPL version 3](LICENSE), notamment la conservation des notices et la fourniture du code source correspondant dans les cas prévus par la licence.
+
+Les obligations s’appliquent aussi aux versions modifiées utilisées via un service réseau : la section 13 impose de proposer de manière visible et sans frais le code source correspondant de cette version aux utilisateurs qui interagissent avec elle à distance. Un accès réservé par Cloudflare Access ne supprime pas cette obligation. La licence ne demande pas de publier les plans clients, données métier ou secrets d’exploitation du seul fait de leur traitement par GeoFlow.
+
+La licence couvre les éléments propres à GeoFlow ; les dépendances Python, ODA et les autres composants tiers conservent leurs licences et notices respectives. Les [contributions acceptées](CONTRIBUTING.md) sont distribuées sous la même licence. Consulter aussi la [sécurité](SECURITY.md), la [revue des licences tierces](docs/THIRD_PARTY_LICENSES.md) et le [rapport de stabilisation](docs/DEPLOYMENT_REVIEW.md).
 
 ## Arrêter GeoFlow
 

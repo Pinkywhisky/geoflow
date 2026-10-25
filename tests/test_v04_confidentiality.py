@@ -1,28 +1,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 
 
 ROOT = Path(__file__).parents[1]
 
 
 def test_candidate_files_do_not_contain_private_reference_markers() -> None:
-    excluded_roots = {
-        ".git",
-        ".venv",
-        ".pytest_cache",
-        "data",
-        "samples/private",
-    }
+    # Inspect candidates for publication, never ignored credentials/runtime data.
+    candidates = subprocess.check_output(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=ROOT,
+    ).split(b"\0")
     files = [
-        path
-        for path in ROOT.rglob("*")
-        if path.is_file()
-        and not any(
-            path.relative_to(ROOT).as_posix() == excluded
-            or path.relative_to(ROOT).as_posix().startswith(excluded + "/")
-            for excluded in excluded_roots
-        )
+        ROOT / name.decode()
+        for name in candidates
+        if name and (ROOT / name.decode()).is_file()
     ]
     forbidden = (
         "P" + "4074",

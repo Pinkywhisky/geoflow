@@ -1,0 +1,11 @@
+name: Proposition
+description: Décrire un besoin et le résultat souhaité.
+title: "[Proposition] "
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: Besoin et comportement souhaité
+      description: Donner un exemple synthétique, sans information client.
+    validations:
+      required: true

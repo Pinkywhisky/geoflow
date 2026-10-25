@@ -25,9 +25,13 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from app.concurrency import AnalysisAdmissionMiddleware, run_analysis
+from app.security import SecurityMiddleware
+from app.version import __version__
 from app.domain import (
     Dossier,
     GlobalCheckStatus,
+    ProfileUsage,
     StatutValidationDonnees,
     StatutValidationMillieme,
     VerificationStatus,
@@ -98,7 +102,14 @@ BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = Path(os.environ.get("GEOFLOW_DATA_DIR", BASE_DIR.parent / "data"))
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="GeoFlow", version="0.4.3")
+app = FastAPI(title="GeoFlow", version=__version__)
+app.add_middleware(AnalysisAdmissionMiddleware)
+app.add_middleware(
+    SecurityMiddleware, public_origin=os.environ.get("GEOFLOW_PUBLIC_ORIGIN", ""),
+    # FastAPI's generated developer docs use CDN assets and inline scripts.
+    # Keep their existing behavior without weakening the application's CSP.
+    csp_exempt_paths=frozenset({"/docs", "/redoc", "/docs/oauth2-redirect"}),
+)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -112,6 +123,7 @@ def _static_version() -> str:
 
 
 templates.env.globals["static_version"] = _static_version()
+templates.env.globals["app_version"] = __version__
 repository = JsonDossierRepository(DATA_DIR)
 analysis_repository = QuickAnalysisRepository(DATA_DIR / "quick-analyses")
 
@@ -725,7 +737,7 @@ async def _save_temporary_upload(file: UploadFile, suffix: str) -> Path:
                     raise UploadTooLargeError
                 temporary.write(chunk)
         return path
-    except Exception:
+    except BaseException:
         _remove_temporary_file(path)
         raise
 
@@ -951,16 +963,25 @@ async def import_plan(
     request: Request, dossier_id: str, file: UploadFile | None = None
 ) -> Response:
     dossier = _get_dossier(dossier_id)
+    original = dossier.model_dump_json()
     temporary_path: Path | None = None
     try:
         filename, file_type = _upload_metadata(file)
         assert file is not None
         temporary_path = await _save_temporary_upload(file, f".{file_type}")
-        with dxf_source(temporary_path, file_type) as dxf_path:
-            control, planches = inspect_dxf(dxf_path, filename)
-        attach_import(dossier, filename, file_type, control, planches)
+        await run_analysis(_import_plan, temporary_path, file_type, filename, dossier)
+        # Analysis yields to autosave/deletion. Commit only if the source dossier
+        # still exists and is unchanged; this check/save never crosses an await.
+        current = _get_dossier(dossier_id)
+        if current.model_dump_json() != original:
+            return _plan_page(
+                request, current,
+                "Le dossier a été modifié pendant l’analyse. Réessayez l’import.", 409,
+            )
         repository.save(dossier)
         return RedirectResponse(f"/dossiers/{dossier.id}/plan", status_code=303)
+    except HTTPException:
+        raise
     except ValueError as exc:
         return _plan_page(request, dossier, str(exc), 400)
     except UploadTooLargeError:
@@ -996,9 +1017,11 @@ async def import_plan(
             request, dossier, "Une erreur inattendue empêche cet import.", 500
         )
     finally:
-        if file is not None:
-            await file.close()
-        _remove_temporary_file(temporary_path)
+        try:
+            if file is not None:
+                await file.close()
+        finally:
+            _remove_temporary_file(temporary_path)
 
 
 @app.post("/dossiers/{dossier_id}/unite", response_class=HTMLResponse)
@@ -1403,6 +1426,29 @@ async def delete_quick_analysis(analysis_id: str) -> RedirectResponse:
     return RedirectResponse("/?analysis_deleted=1", status_code=303)
 
 
+def _import_plan(path: Path, file_type: str, filename: str, dossier: Dossier) -> None:
+    with dxf_source(path, file_type) as dxf_path:
+        control, planches = inspect_dxf(dxf_path, filename)
+    attach_import(dossier, filename, file_type, control, planches)
+
+
+def _inspect_analysis(
+    path: Path, file_type: str, filename: str, started_at: float
+) -> QuickAnalysisSnapshot:
+    with dxf_source(path, file_type) as dxf_path:
+        control, planches = inspect_dxf(dxf_path, filename)
+    dossier = prepare_quick_analysis_dossier(filename, file_type, control, planches)
+    return analysis_repository.create(
+        dossier, duration_seconds=time.perf_counter() - started_at
+    )
+
+
+def _apply_analysis_profile(
+    snapshot: QuickAnalysisSnapshot, usage: ProfileUsage | None
+) -> None:
+    apply_profile_choice(snapshot.dossier, usage)
+
+
 async def _create_analysis(file: UploadFile | None) -> QuickAnalysisSnapshot:
     """Inspect an uploaded plan once and keep it as a temporary snapshot."""
 
@@ -1412,16 +1458,15 @@ async def _create_analysis(file: UploadFile | None) -> QuickAnalysisSnapshot:
         filename, file_type = _upload_metadata(file)
         assert file is not None
         temporary_path = await _save_temporary_upload(file, f".{file_type}")
-        with dxf_source(temporary_path, file_type) as dxf_path:
-            control, planches = inspect_dxf(dxf_path, filename)
-        dossier = prepare_quick_analysis_dossier(filename, file_type, control, planches)
-        return analysis_repository.create(
-            dossier, duration_seconds=time.perf_counter() - started_at
+        return await run_analysis(
+            _inspect_analysis, temporary_path, file_type, filename, started_at
         )
     finally:
-        if file is not None:
-            await file.close()
-        _remove_temporary_file(temporary_path)
+        try:
+            if file is not None:
+                await file.close()
+        finally:
+            _remove_temporary_file(temporary_path)
 
 
 def _analysis_failure(exc: Exception) -> tuple[str, int]:
@@ -1459,7 +1504,7 @@ async def analyze(request: Request, file: UploadFile | None = None) -> Response:
     if profile_repository.list()[0]:
         return RedirectResponse(f"/analyses/{snapshot.id}/profil", status_code=303)
     # Without any profile the choice would be empty: analyse automatically.
-    apply_profile_choice(snapshot.dossier, None)
+    await run_analysis(_apply_analysis_profile, snapshot, None)
     analysis_repository.update(snapshot)
     return RedirectResponse(f"/analyses/{snapshot.id}", status_code=303)
 
@@ -1885,6 +1930,12 @@ async def analyse_with_profile(
                 request, snapshot, selected=chosen.id, warning={"name": chosen.name, "compatibility": compatibility}
             )
         usage = usage_from_profile(chosen)
-    apply_profile_choice(snapshot.dossier, usage)
-    analysis_repository.update(snapshot)
+    await run_analysis(_apply_analysis_profile, snapshot, usage)
+    try:
+        analysis_repository.update(snapshot)
+    except QuickAnalysisNotFoundError as exc:
+        # A user may delete/promote the snapshot while this thread is running.
+        raise HTTPException(
+            status_code=404, detail="Analyse rapide introuvable ou expirée."
+        ) from exc
     return RedirectResponse(f"/analyses/{analysis_id}", status_code=303)
