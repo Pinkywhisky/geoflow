@@ -331,6 +331,9 @@ def test_rename_keeps_id_documents_and_invalidates_validation(client_and_repos) 
     assert renamed.statut_validation_donnees == StatutValidationDonnees.A_VALIDER
     assert renamed.generations[0].nom_fichier == "geoflow_synthetic_copropriete_brouillon.docx"
     assert client.get("/dossiers/a1b2c3/plan").status_code == 200
+    # Generated file names have no spaces: they must wrap on narrow screens.
+    documents = client.get("/dossiers/a1b2c3/documents").text
+    assert '<strong class="wrap-anywhere">geoflow_synthetic_copropriete_brouillon.docx</strong>' in documents
 
 
 def test_home_lists_the_new_reference_with_the_plan_name(client_and_repos) -> None:

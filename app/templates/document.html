@@ -78,7 +78,7 @@
       {% for item in dossier.generations|reverse %}
       <a href="/dossiers/{{ dossier.id }}/documents/{{ item.id }}/download" download>
         <span class="dossier-main">
-          <strong>{{ item.nom_fichier }}</strong>
+          <strong class="wrap-anywhere">{{ item.nom_fichier }}</strong>
           <small>{{ item.statut }} · {{ item.date_generation.strftime("%d/%m/%Y %H:%M") }}{% if loop.first %} · plus récent{% endif %}</small>
         </span>
         <span class="resume-link">Télécharger <span aria-hidden="true">↓</span></span>
